@@ -24,6 +24,9 @@ export default function App() {
 
   const startCamera = async () => {
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Browser does not support direct camera access.");
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: cameraFacing },
         audio: false
@@ -36,7 +39,11 @@ export default function App() {
       setError(null);
     } catch (err) {
       console.error("Camera error:", err);
-      setError("Arre! Camera permission denied or not found. Please check your settings.");
+      setIsCameraOpen(false);
+      setError(
+        "Arre! Direct camera access is blocked or not supported. " +
+        "Please use the 'System Picker' button instead which uses your phone's default camera app."
+      );
     }
   };
 
@@ -203,7 +210,7 @@ export default function App() {
               <h2 className="text-3xl font-black uppercase text-ink mb-2 italic">CookGenix Kitchen</h2>
               <p className="text-gray-500 mb-8 font-medium italic">"Dekho, fridge mein kya hai!"</p>
               
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-md mx-auto">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
                 <button 
                   onClick={() => setIsCameraOpen(true)}
                   className="flex flex-col items-center justify-center gap-3 px-6 py-8 bg-saffron text-white rounded-2xl font-black uppercase tracking-widest hover:bg-chilli transition-all shadow-lg active:scale-95"
@@ -211,9 +218,24 @@ export default function App() {
                   <div className="p-3 bg-white/20 rounded-xl">
                     <Camera size={32} />
                   </div>
-                  <span>Open Camera</span>
+                  <span>Live Camera</span>
                 </button>
                 
+                <button 
+                  onClick={() => {
+                    if (fileInputRef.current) {
+                      fileInputRef.current.setAttribute('capture', 'environment');
+                      fileInputRef.current.click();
+                    }
+                  }}
+                  className="flex flex-col items-center justify-center gap-3 px-6 py-8 bg-chilli text-white rounded-2xl font-black uppercase tracking-widest hover:bg-ink transition-all shadow-lg active:scale-95 border-4 border-white/20"
+                >
+                  <div className="p-3 bg-white/20 rounded-xl">
+                    <Zap size={32} />
+                  </div>
+                  <span>System Camera</span>
+                </button>
+
                 <button 
                   onClick={() => {
                     if (fileInputRef.current) {
@@ -221,7 +243,7 @@ export default function App() {
                       fileInputRef.current.click();
                     }
                   }}
-                  className="flex flex-col items-center justify-center gap-3 px-6 py-8 bg-ink text-white rounded-2xl font-black uppercase tracking-widest hover:bg-saffron transition-all shadow-lg active:scale-95"
+                  className="flex flex-col items-center justify-center gap-3 px-6 py-8 bg-ink text-white rounded-2xl font-black uppercase tracking-widest hover:bg-saffron transition-all shadow-lg active:scale-95 md:col-span-2"
                 >
                   <div className="p-3 bg-white/10 rounded-xl">
                     <Sparkles size={32} className="text-turmeric" />
