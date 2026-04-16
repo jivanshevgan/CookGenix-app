@@ -1,6 +1,6 @@
-import { useState, useRef, type ChangeEvent } from "react";
+import { useState, useRef, type ChangeEvent, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Camera, ChefHat, Sparkles, UtensilsCrossed, RefreshCcw, CheckCircle2, ChevronRight, Info } from "lucide-react";
+import { Camera, ChefHat, Sparkles, UtensilsCrossed, RefreshCcw, CheckCircle2, ChevronRight, Info, X, Zap, RotateCcw } from "lucide-react";
 import { analyzeFridgeImage, type AnalysisResponse, type Recipe } from "./lib/gemini";
 
 export default function App() {
@@ -8,7 +8,67 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [cameraFacing, setCameraFacing] = useState<"user" | "environment">("environment");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    setIsCameraOpen(false);
+  };
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: cameraFacing },
+        audio: false
+      });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      streamRef.current = stream;
+      setIsCameraOpen(true);
+      setError(null);
+    } catch (err) {
+      console.error("Camera error:", err);
+      setError("Arre! Camera permission denied or not found. Please check your settings.");
+    }
+  };
+
+  useEffect(() => {
+    if (isCameraOpen) {
+      startCamera();
+    }
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [cameraFacing, isCameraOpen]);
+
+  const capturePhoto = () => {
+    if (videoRef.current) {
+      const canvas = document.createElement("canvas");
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(videoRef.current, 0, 0);
+        const dataUrl = canvas.toDataURL("image/jpeg");
+        setImage(dataUrl);
+        stopCamera();
+      }
+    }
+  };
+
+  const switchCamera = () => {
+    setCameraFacing(prev => prev === "user" ? "environment" : "user");
+  };
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -42,8 +102,6 @@ export default function App() {
     }
   };
 
-  const triggerUpload = () => fileInputRef.current?.click();
-
   const handleReset = () => {
     setImage(null);
     setResult(null);
@@ -73,14 +131,62 @@ export default function App() {
 
       <main className="max-w-5xl mx-auto">
         <AnimatePresence mode="wait">
-          {!image ? (
+          {isCameraOpen ? (
+            <motion.div
+              key="camera-view"
+              initial={{ opacity: 0, scale: 1.1 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="relative max-w-2xl mx-auto bg-black rounded-[40px] overflow-hidden border-8 border-ink shadow-2xl aspect-[3/4]"
+            >
+              <video 
+                ref={videoRef} 
+                autoPlay 
+                playsInline 
+                className="w-full h-full object-cover"
+              />
+              
+              {/* Camera Overlays */}
+              <div className="absolute inset-0 pointer-events-none border-[40px] border-black/20" />
+              <div className="absolute top-8 left-8 flex items-center gap-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/20">
+                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                <span className="text-[10px] font-black text-white uppercase tracking-widest">LIVE FEED</span>
+              </div>
+
+              <div className="absolute bottom-10 left-0 right-0 flex justify-center items-center gap-8 px-6">
+                <button 
+                  onClick={stopCamera}
+                  className="w-14 h-14 bg-white/10 backdrop-blur-xl border border-white/20 rounded-full flex items-center justify-center text-white hover:bg-white/20 active:scale-95 transition-all"
+                >
+                  <X size={24} />
+                </button>
+
+                <button 
+                  onClick={capturePhoto}
+                  className="group relative w-20 h-20"
+                >
+                  <div className="absolute inset-0 bg-white rounded-full scale-110 opacity-20 group-hover:scale-125 transition-transform" />
+                  <div className="absolute inset-2 border-4 border-ink rounded-full z-10" />
+                  <div className="absolute inset-0 bg-white rounded-full shadow-xl flex items-center justify-center text-ink group-active:scale-90 transition-transform">
+                    <div className="w-4 h-4 rounded-full border-2 border-ink animate-ping opacity-20" />
+                  </div>
+                </button>
+
+                <button 
+                  onClick={switchCamera}
+                  className="w-14 h-14 bg-white/10 backdrop-blur-xl border border-white/20 rounded-full flex items-center justify-center text-white hover:bg-white/20 active:scale-95 transition-all"
+                >
+                  <RotateCcw size={24} />
+                </button>
+              </div>
+            </motion.div>
+          ) : !image ? (
             <motion.div
               key="upload"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white border-4 border-turmeric rounded-3xl p-12 text-center cursor-pointer brutal-shadow hover:translate-x-[-2px] hover:translate-y-[-2px] transition-transform"
-              onClick={triggerUpload}
+              className="bg-white border-4 border-turmeric rounded-3xl p-8 md:p-12 text-center brutal-shadow"
             >
               <input 
                 type="file" 
@@ -89,16 +195,44 @@ export default function App() {
                 accept="image/*" 
                 className="hidden" 
               />
+              
               <div className="w-20 h-20 bg-cream rounded-full flex items-center justify-center mx-auto mb-6 text-saffron border-2 border-saffron">
                 <Camera size={40} />
               </div>
-              <h2 className="text-3xl font-black uppercase text-ink mb-2 italic">Upload Fridge Photo</h2>
-              <p className="text-gray-500 mb-8 font-medium">Dekho, fridge mein kya hai! Show me the goods.</p>
-              <button 
-                className="px-10 py-4 bg-ink text-white rounded-xl font-black uppercase tracking-widest hover:bg-saffron transition-colors shadow-lg"
-              >
-                Choose Image
-              </button>
+              
+              <h2 className="text-3xl font-black uppercase text-ink mb-2 italic">CookGenix Kitchen</h2>
+              <p className="text-gray-500 mb-8 font-medium italic">"Dekho, fridge mein kya hai!"</p>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-md mx-auto">
+                <button 
+                  onClick={() => setIsCameraOpen(true)}
+                  className="flex flex-col items-center justify-center gap-3 px-6 py-8 bg-saffron text-white rounded-2xl font-black uppercase tracking-widest hover:bg-chilli transition-all shadow-lg active:scale-95"
+                >
+                  <div className="p-3 bg-white/20 rounded-xl">
+                    <Camera size={32} />
+                  </div>
+                  <span>Open Camera</span>
+                </button>
+                
+                <button 
+                  onClick={() => {
+                    if (fileInputRef.current) {
+                      fileInputRef.current.removeAttribute('capture');
+                      fileInputRef.current.click();
+                    }
+                  }}
+                  className="flex flex-col items-center justify-center gap-3 px-6 py-8 bg-ink text-white rounded-2xl font-black uppercase tracking-widest hover:bg-saffron transition-all shadow-lg active:scale-95"
+                >
+                  <div className="p-3 bg-white/10 rounded-xl">
+                    <Sparkles size={32} className="text-turmeric" />
+                  </div>
+                  <span>From Gallery</span>
+                </button>
+              </div>
+              
+              <p className="mt-8 text-xs font-black text-gray-400 uppercase tracking-widest">
+                Support for all Indian ingredients & spices
+              </p>
             </motion.div>
           ) : (
             <motion.div
