@@ -178,10 +178,23 @@ export default function App() {
       return confirmation;
     } catch (err: any) {
       console.error("Phone login initiation failed", err);
-      // specific error for blocked domains
+      
       if (err.code === 'auth/unauthorized-domain') {
-        alert("Domain Not Authorized: Please follow the 'Step-by-Step' guide to add your app URL to Authorized Domains in Firebase Console.");
+        const currentDomain = window.location.hostname;
+        alert(`SIGN-IN BLOCKED: Domain "${currentDomain}" is not authorized.\n\nPLEASE FIX THIS:\n1. Open Firebase Console\n2. Go to Authentication -> Settings -> Authorized Domains\n3. Add "${currentDomain}" to the list.`);
+      } else if (err.code === 'auth/invalid-phone-number') {
+        alert("Invalid phone number. Please include the country code (e.g., +91).");
+      } else {
+        alert(`Login Error: ${err.message}`);
       }
+      
+      // If recaptcha fails, clear it so it can be re-initialized
+      try {
+        if ((window as any).recaptchaVerifier) {
+          (window as any).recaptchaVerifier.clear();
+          (window as any).recaptchaVerifier = null;
+        }
+      } catch (e) {}
       throw err;
     }
   };
