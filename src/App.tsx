@@ -47,6 +47,16 @@ export default function App() {
   const [feedback, setFeedback] = useState("");
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
 
+  // Persistence fix for iframe sessions
+  useEffect(() => {
+    // Add recaptcha container to body directly if it doesn't exist
+    if (!document.getElementById('recaptcha-container')) {
+      const container = document.createElement('div');
+      container.id = 'recaptcha-container';
+      document.body.appendChild(container);
+    }
+  }, []);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -125,45 +135,35 @@ export default function App() {
     }
   };
 
-  const setupRecaptcha = (containerId: string) => {
-    // Completely reset any global verifier to ensure a clean slate
+  const setupRecaptcha = (containerId: string, size: 'invisible' | 'normal' = 'normal') => {
+    // 1. Clean up existing
     if ((window as any).recaptchaVerifier) {
       try {
         (window as any).recaptchaVerifier.clear();
         (window as any).recaptchaVerifier = null;
-      } catch (e) {
-        console.warn("reCAPTCHA Cleanup:", e);
-      }
+      } catch (e) {}
     }
     
-    // Ensure container exists and is empty
     const container = document.getElementById(containerId);
-    if (container) {
-      container.innerHTML = "";
-    } else {
-      // Create it if it doesn't exist (safety)
-      const newDiv = document.createElement('div');
-      newDiv.id = containerId;
-      document.body.appendChild(newDiv);
-    }
+    if (!container) return null;
+    container.innerHTML = "";
     
     try {
       const verifier = new RecaptchaVerifier(auth, containerId, {
-        'size': 'invisible',
+        'size': size,
         'callback': (response: any) => {
           console.log("reCAPTCHA solved");
         },
         'expired-callback': () => {
-          console.log("reCAPTCHA expired");
-          alert("Security verification expired. Please try sending OTP again.");
+          alert("reCAPTCHA expired. Please refresh.");
         }
       });
       
       (window as any).recaptchaVerifier = verifier;
       return verifier;
     } catch (err) {
-      console.error("reCAPTCHA creation failed", err);
-      throw new Error("Security verification (reCAPTCHA) failed to initialize.");
+      console.error("reCAPTCHA Init Error:", err);
+      return null;
     }
   };
 
@@ -422,7 +422,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <LoginScreen onLogin={handleLogin} onPhoneLogin={handlePhoneLogin} isDarkMode={isDarkMode} toggleDarkMode={toggleDarkMode} />;
+    return <LoginScreen onLogin={handleLogin} onPhoneLogin={handlePhoneLogin} setupRecaptcha={setupRecaptcha} isDarkMode={isDarkMode} toggleDarkMode={toggleDarkMode} />;
   }
 
   return (
@@ -1090,7 +1090,7 @@ function PlusButton({ onClick }: any) {
   );
 }
 
-function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any) {
+function LoginScreen({ onLogin, onPhoneLogin, setupRecaptcha, isDarkMode, toggleDarkMode }: any) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [otp, setOtp] = useState("");
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
@@ -1098,29 +1098,50 @@ function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any)
   const [loading, setLoading] = useState(false);
   const [isInIframe, setIsInIframe] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [debugLog, setDebugLog] = useState<string | null>(null);
 
   useEffect(() => {
-    setIsInIframe(window !== window.parent);
-    setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
+    // Precise detection of environment
+    const isIframe = window !== window.parent || document.referrer.includes('run.app');
+    const isMob = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    setIsInIframe(isIframe);
+    setIsMobile(isMob);
   }, []);
 
-  const openInNewTab = () => {
+  const openInFullMode = () => {
     const url = window.location.href;
-    const newWindow = window.open(url, '_blank');
-    if (!newWindow) {
-      alert("Please allow pop-ups to fix the login process.");
+    const newTab = window.open(url, '_blank');
+    if (!newTab) {
+      window.top!.location.href = url;
     }
   };
 
   const initiatePhoneLogin = async () => {
     if (!phoneNumber) return;
+    setDebugLog(null);
     setLoading(true);
+    
     try {
+      // 1. Setup the verifier VISIBLY
+      const verifier = (window as any).recaptchaVerifier || setupRecaptcha('recaptcha-container', 'normal');
+      if (!verifier) {
+        throw new Error("Unable to load security verification box.");
+      }
+
+      // 2. Clear any old error
+      setDebugLog("Verification starting...");
+      
       const confirmation = await onPhoneLogin(phoneNumber);
       setConfirmationResult(confirmation);
       setStep("otp");
-    } catch (err) {
-      alert("Please ensure your number is in International format (e.g., +919876543210)");
+      setDebugLog("OTP Sent successfully!");
+    } catch (err: any) {
+      console.error("Login Step 1 Error:", err);
+      setDebugLog(`${err.code || 'ERROR'}: ${err.message}`);
+      
+      if (err.code === 'auth/unauthorized-domain') {
+        alert("CRITICAL ERROR: This domain is not authorized in Firebase Console.");
+      }
     } finally {
       setLoading(false);
     }
@@ -1128,10 +1149,13 @@ function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any)
 
   const verifyOtp = async () => {
     if (!otp || !confirmationResult) return;
+    setDebugLog(null);
     setLoading(true);
     try {
       await confirmationResult.confirm(otp);
-    } catch (err) {
+      setDebugLog("Logged in successfully!");
+    } catch (err: any) {
+      setDebugLog(err.message);
       alert("Invalid OTP code. Please try again.");
     } finally {
       setLoading(false);
@@ -1140,7 +1164,6 @@ function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any)
 
   return (
     <div className={`min-h-screen flex items-center justify-center p-6 ${isDarkMode ? 'bg-bg-dark text-white' : 'bg-bg-light text-gray-900'}`}>
-      <div id="recaptcha-container"></div>
       <div className="max-w-md w-full space-y-12">
         <div className="text-center space-y-6">
           <motion.div 
@@ -1153,7 +1176,7 @@ function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any)
           <div className="space-y-2">
             <h1 className="text-4xl font-black italic tracking-tight">Cook<span className="text-primary">Genix</span></h1>
             <p className="text-gray-500 font-medium whitespace-pre-line">
-              {step === "phone" ? "Please login to start your culinary journey." : `OTP sent to ${phoneNumber}`}
+              {step === "phone" ? "Mobile Login Verification" : `OTP sent to ${phoneNumber}`}
             </p>
           </div>
         </div>
@@ -1163,97 +1186,94 @@ function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any)
           animate={{ opacity: 1, scale: 1 }}
           className="relative glass p-8 rounded-[40px] shadow-2xl border-2 border-white/10 overflow-hidden"
         >
-          {/* Mobile Iframe Fix Header */}
-          {isInIframe && isMobile && (
-            <div className="mb-8 p-6 bg-primary/20 rounded-[24px] border border-primary/30 text-center space-y-4">
-              <div className="flex items-center justify-center gap-2 text-primary">
-                <Zap size={20} className="fill-primary" />
-                <span className="font-black uppercase tracking-widest text-[10px]">Mobile Fix Required</span>
-              </div>
-              <p className="text-xs font-bold leading-relaxed opacity-80">
-                Indian mobile browsers block Google Login inside our app preview for safety. 
-              </p>
-              <button 
-                onClick={openInNewTab}
-                className="w-full py-3 bg-primary text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-xl hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2"
-              >
-                🚀 Tap Here to Fix Login
-              </button>
-            </div>
-          )}
-
-          <div className="space-y-4">
+          <div className="space-y-6">
             {step === "phone" ? (
               <>
-                <button 
-                  onClick={onLogin}
-                  disabled={isInIframe && isMobile}
-                  className={`w-full flex items-center justify-center gap-4 py-4 px-6 rounded-2xl font-black shadow-lg transition-all ${
-                    isInIframe && isMobile 
-                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed grayscale' 
-                    : 'bg-white text-gray-900 border border-gray-100 hover:scale-[1.02]'
-                  }`}
-                >
-                  <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
-                  Sign in with Google
-                </button>
-                
-                {isInIframe && !isMobile && (
+                <div className="space-y-4">
                   <button 
-                    onClick={openInNewTab}
-                    className="w-full py-2 text-[10px] font-black uppercase tracking-widest text-primary hover:underline flex items-center justify-center gap-2"
+                    onClick={onLogin}
+                    className="w-full flex items-center justify-center gap-4 py-4 px-6 bg-white text-gray-900 rounded-2xl font-black shadow-lg hover:scale-[1.02] transition-transform border border-gray-100"
                   >
-                    <Share2 size={12} /> Having trouble? Open in New Tab
+                    <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
+                    Sign in with Google
                   </button>
-                )}
+                  
+                  {isInIframe && (
+                    <button 
+                      onClick={openInFullMode}
+                      className="w-full py-2 text-[10px] font-black uppercase tracking-widest text-primary hover:underline flex items-center justify-center gap-2"
+                    >
+                      <Share2 size={12} /> Troubleshoot: Open in Full Screen Mode
+                    </button>
+                  )}
+                </div>
 
-                <div className="relative py-4">
+                <div className="relative py-2">
                   <div className="absolute inset-0 flex items-center"><div className="w-full h-px bg-black/5 dark:bg-white/10"></div></div>
-                  <div className="relative flex justify-center text-[10px] font-black uppercase tracking-widest text-gray-400"><span className="px-4 bg-white dark:bg-bg-dark rounded-full">Or Mobile</span></div>
+                  <div className="relative flex justify-center text-[10px] font-black uppercase tracking-widest text-gray-400"><span className="px-4 bg-white dark:bg-bg-dark rounded-full">Or Phone Number</span></div>
                 </div>
                 
-                <div className="space-y-2">
-                  <input 
-                    type="tel" 
-                    placeholder="+91 00000 00000"
-                    value={phoneNumber}
-                    onChange={(e) => setPhoneNumber(e.target.value)}
-                    className="w-full p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary transition-colors outline-none font-bold"
-                  />
+                <div className="space-y-4 text-center">
+                  <div className="space-y-2 text-left">
+                    <label className="text-xs font-black uppercase tracking-widest opacity-50 ml-2">Mobile (with +91)</label>
+                    <input 
+                      type="tel" 
+                      placeholder="+91 00000 00000"
+                      value={phoneNumber}
+                      onChange={(e) => setPhoneNumber(e.target.value)}
+                      className="w-full p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary transition-colors outline-none font-bold"
+                    />
+                  </div>
+
+                  {/* VISIBLE RECAPTCHA AREA */}
+                  <div id="recaptcha-container" className="flex justify-center my-4 overflow-hidden rounded-xl border-2 border-primary/10 p-2 bg-white/5"></div>
+
                   <button 
                     onClick={initiatePhoneLogin}
                     disabled={loading || !phoneNumber}
-                    className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg disabled:opacity-50 transition-opacity"
+                    className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg disabled:opacity-50 transition-all flex items-center justify-center gap-2 active:scale-95"
                   >
-                    {loading ? "Sending..." : "Send OTP"}
+                    {loading ? (
+                      <RefreshCcw size={20} className="animate-spin" />
+                    ) : (
+                      "Send OTP Code"
+                    )}
                   </button>
                 </div>
 
+                {debugLog && (
+                  <div className="p-4 bg-black/5 dark:bg-white/5 rounded-2xl text-[10px] font-mono text-primary overflow-auto max-h-24">
+                    <p className="font-black mb-1 opacity-50 uppercase tracking-widest">Diagnostic Info:</p>
+                    {debugLog}
+                  </div>
+                )}
+
                 <div className={`p-4 rounded-2xl text-[10px] font-medium leading-relaxed ${isDarkMode ? 'bg-white/5 text-gray-400' : 'bg-black/5 text-gray-500'}`}>
                   <p className="font-black uppercase tracking-widest text-primary mb-2 flex items-center gap-2">
-                    <Info size={12} /> Mobile Fixes:
+                    <Info size={12} /> If OTP is not received:
                   </p>
                   <ul className="list-disc pl-4 space-y-1">
-                    <li>Allow pop-ups in your browser settings</li>
-                    <li>If Google Login doesn't open, use the "Open in New Tab" button above</li>
-                    <li>Ensure your number starts with <strong>+91</strong></li>
+                    <li>Check if reCAPTCHA box above is solved</li>
+                    <li>Ensure you added <strong>+91</strong> (India)</li>
+                    <li>If on Mobile, use the <strong>Full Screen Mode</strong> button above</li>
                   </ul>
                 </div>
               </>
             ) : (
               <div className="space-y-4">
+                <p className="text-center text-xs font-bold opacity-50">Enter the code sent to your mobile</p>
                 <input 
                   type="text" 
-                  placeholder="Enter 6-digit OTP"
+                  placeholder="6-digit OTP"
                   value={otp}
                   onChange={(e) => setOtp(e.target.value)}
                   maxLength={6}
-                  className="w-full p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary transition-colors outline-none font-bold text-center tracking-[1em]"
+                  className="w-full p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary transition-colors outline-none font-bold text-center text-2xl tracking-[0.5em]"
                 />
                 <button 
                   onClick={verifyOtp}
                   disabled={loading || otp.length < 6}
-                  className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg disabled:opacity-50 transition-opacity"
+                  className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg disabled:opacity-50 transition-all active:scale-95"
                 >
                   {loading ? "Verifying..." : "Verify & Login"}
                 </button>
@@ -1261,8 +1281,14 @@ function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any)
                   onClick={() => setStep("phone")}
                   className="w-full py-2 text-primary font-bold text-xs uppercase"
                 >
-                  Change Number
+                  Edit Number
                 </button>
+
+                {debugLog && (
+                   <div className="p-4 bg-black/5 dark:bg-white/5 rounded-2xl text-[10px] font-mono text-primary">
+                     {debugLog}
+                   </div>
+                )}
               </div>
             )}
           </div>
