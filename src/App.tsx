@@ -1088,6 +1088,15 @@ function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any)
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
   const [step, setStep] = useState<"phone" | "otp">("phone");
   const [loading, setLoading] = useState(false);
+  const [isInIframe, setIsInIframe] = useState(false);
+
+  useEffect(() => {
+    setIsInIframe(window !== window.parent);
+  }, []);
+
+  const openInNewTab = () => {
+    window.open(window.location.href, '_blank');
+  };
 
   const initiatePhoneLogin = async () => {
     if (!phoneNumber) return;
@@ -1150,6 +1159,16 @@ function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any)
                   <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
                   Sign in with Google
                 </button>
+                
+                {isInIframe && (
+                  <button 
+                    onClick={openInNewTab}
+                    className="w-full py-2 text-[10px] font-black uppercase tracking-widest text-primary hover:underline flex items-center justify-center gap-2"
+                  >
+                    <Share2 size={12} /> Having trouble on Mobile? Open in New Tab
+                  </button>
+                )}
+
                 <div className="relative py-4">
                   <div className="absolute inset-0 flex items-center"><div className="w-full h-px bg-black/5 dark:bg-white/10"></div></div>
                   <div className="relative flex justify-center text-[10px] font-black uppercase tracking-widest text-gray-400"><span className="px-4 bg-white dark:bg-bg-dark rounded-full">Or Mobile</span></div>
@@ -1170,6 +1189,17 @@ function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any)
                   >
                     {loading ? "Sending..." : "Send OTP"}
                   </button>
+                </div>
+
+                <div className={`p-4 rounded-2xl text-[10px] font-medium leading-relaxed ${isDarkMode ? 'bg-white/5 text-gray-400' : 'bg-black/5 text-gray-500'}`}>
+                  <p className="font-black uppercase tracking-widest text-primary mb-2 flex items-center gap-2">
+                    <Info size={12} /> Mobile Fixes:
+                  </p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li>Allow pop-ups in your browser settings</li>
+                    <li>If Google Login doesn't open, use the "Open in New Tab" button above</li>
+                    <li>Ensure your number starts with <strong>+91</strong></li>
+                  </ul>
                 </div>
               </>
             ) : (
