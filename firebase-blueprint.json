@@ -1,0 +1,62 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Stores user profile information and authentication metadata.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique user ID from Firebase Auth." },
+        "name": { "type": "string", "description": "Display name of the user." },
+        "email": { "type": "string", "format": "email", "description": "User's email address." },
+        "phoneNumber": { "type": "string", "description": "User's mobile number if available." },
+        "loginType": { "type": "string", "enum": ["google", "otp", "password"], "description": "Authentication method used." },
+        "photoURL": { "type": "string", "format": "uri", "description": "URL to the user's profile picture." },
+        "lastLogin": { "type": "string", "format": "date-time", "description": "Timestamp of the last login." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the profile was created." }
+      },
+      "required": ["uid", "name", "loginType", "createdAt"]
+    },
+    "FavoriteRecipe": {
+      "title": "FavoriteRecipe",
+      "description": "A recipe saved by the user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique ID for the saved recipe entry." },
+        "name": { "type": "string", "description": "Name of the recipe." },
+        "type": { "type": "string", "description": "Recipe category (e.g., Breakfast, Snack)." },
+        "ingredients": { "type": "array", "items": { "type": "string" }, "description": "List of ingredients used." },
+        "method": { "type": "string", "description": "Step-by-step cooking instructions." },
+        "cookingTime": { "type": "string", "description": "Estimated cooking time." },
+        "savedAt": { "type": "string", "format": "date-time", "description": "Timestamp when the recipe was saved." }
+      },
+      "required": ["id", "name", "savedAt"]
+    },
+    "AppRating": {
+      "title": "AppRating",
+      "description": "User's rating and feedback for the application.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "ID of the user who provided the rating." },
+        "userName": { "type": "string", "description": "Name of the user for display purposes." },
+        "rating": { "type": "integer", "description": "Rating score from 1 to 5.", "minimum": 1, "maximum": 5 },
+        "feedback": { "type": "string", "description": "Optional text feedback." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the rating was submitted." }
+      },
+      "required": ["uid", "rating", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "UserProfile",
+      "description": "Top-level collection for user data."
+    },
+    "/users/{uid}/favorites/{recipeId}": {
+      "schema": "FavoriteRecipe",
+      "description": "User-specific saved recipes."
+    },
+    "/ratings/{ratingId}": {
+      "schema": "AppRating",
+      "description": "Aggregate collection for overall app feedback."
+    }
+  }
+}

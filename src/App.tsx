@@ -3,12 +3,35 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   Camera, ChefHat, Sparkles, UtensilsCrossed, RefreshCcw, 
   CheckCircle2, ChevronRight, Info, X, Zap, RotateCcw, 
-  Image as ImageIcon, Moon, Sun, Heart, Share2, History, Home, 
-  Plus
+  Image as ImageIcon, Moon, Sun, Heart, Share2, Home, 
+  Plus, LogOut, User as UserIcon, Star, Clock
 } from "lucide-react";
 import { analyzeFridgeImage, type AnalysisResponse, type Recipe } from "./lib/gemini";
+import { auth, db, googleProvider } from "./firebase";
+import { 
+  signInWithPopup, 
+  onAuthStateChanged, 
+  signOut, 
+  type User,
+  signInWithPhoneNumber,
+  type ConfirmationResult
+} from "firebase/auth";
+import { 
+  doc, 
+  setDoc, 
+  collection, 
+  onSnapshot, 
+  query, 
+  orderBy, 
+  serverTimestamp,
+  deleteDoc,
+  addDoc
+} from "firebase/firestore";
+import { RecaptchaVerifier } from "./firebase";
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
   const [image, setImage] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResponse | null>(null);
@@ -16,17 +39,211 @@ export default function App() {
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [cameraFacing, setCameraFacing] = useState<"user" | "environment">("environment");
   const [isDarkMode, setIsDarkMode] = useState(false);
-  
+  const [favorites, setFavorites] = useState<Recipe[]>([]);
+  const [view, setView] = useState<"home" | "collection">("home");
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [showRatingModal, setShowRatingModal] = useState(false);
+  const [userRating, setUserRating] = useState(0);
+  const [feedback, setFeedback] = useState("");
+  const [ratingSubmitting, setRatingSubmitting] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Persistence for dark mode
+  // Auth Listener
   useEffect(() => {
-    const savedMode = localStorage.getItem("darkMode") === "true";
-    setIsDarkMode(savedMode);
-    if (savedMode) document.documentElement.classList.add("dark");
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      setUser(u);
+      setLoading(false);
+      if (u) {
+        // Update user profile in Firestore
+        const userRef = doc(db, "users", u.uid);
+        const loginType = u.providerData[0]?.providerId === "google.com" ? "google" : (u.phoneNumber ? "phone" : "password");
+        await setDoc(userRef, {
+          uid: u.uid,
+          name: u.displayName || "CookGenix User",
+          email: u.email,
+          photoURL: u.photoURL,
+          phoneNumber: u.phoneNumber,
+          loginType: loginType,
+          lastLogin: serverTimestamp(),
+          createdAt: serverTimestamp() // setDoc with merge will handle this if it exists
+        }, { merge: true });
+      }
+    });
+    return unsubscribe;
   }, []);
+
+  // Sync favorites with Firestore
+  useEffect(() => {
+    if (!user) {
+      setFavorites([]);
+      return;
+    }
+
+    const q = query(collection(db, "users", user.uid, "favorites"), orderBy("savedAt", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const favs = snapshot.docs.map(doc => ({ ...doc.data() } as Recipe));
+      setFavorites(favs);
+      setIsAuthReady(true);
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  const toggleFavorite = async (recipe: Recipe) => {
+    if (!user) return;
+    
+    const recipeId = btoa(recipe.name).replace(/[^a-zA-Z0-9]/g, ""); // simple unique ID
+    const favRef = doc(db, "users", user.uid, "favorites", recipeId);
+    
+    const isFav = favorites.some(fav => fav.name.trim().toLowerCase() === recipe.name.trim().toLowerCase());
+    
+    if (isFav) {
+      await deleteDoc(favRef);
+    } else {
+      await setDoc(favRef, {
+        ...recipe,
+        id: recipeId,
+        savedAt: serverTimestamp()
+      });
+    }
+  };
+
+  const handleLogin = async () => {
+    try {
+      setError(null);
+      await signInWithPopup(auth, googleProvider);
+    } catch (err: any) {
+      // Ignore if user just closed the popup
+      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
+        return;
+      }
+      console.error("Login failed", err);
+      setError("Google Login failed. Please try again.");
+    }
+  };
+
+  const setupRecaptcha = (containerId: string) => {
+    // Completely reset any global verifier to ensure a clean slate
+    if ((window as any).recaptchaVerifier) {
+      try {
+        (window as any).recaptchaVerifier.clear();
+        (window as any).recaptchaVerifier = null;
+        const container = document.getElementById(containerId);
+        if (container) container.innerHTML = "";
+      } catch (e) {
+        console.warn("Resetting reCAPTCHA...", e);
+      }
+    }
+    
+    try {
+      const verifier = new RecaptchaVerifier(auth, containerId, {
+        'size': 'invisible',
+        'callback': () => {
+          console.log("reCAPTCHA solved");
+        },
+        'expired-callback': () => {
+          console.log("reCAPTCHA expired");
+        }
+      });
+      
+      (window as any).recaptchaVerifier = verifier;
+      return verifier;
+    } catch (err) {
+      console.error("reCAPTCHA creation failed", err);
+      throw err;
+    }
+  };
+
+  const handlePhoneLogin = async (phoneNumber: string) => {
+    try {
+      setError(null);
+      // Ensure number is trimmed and has + prefix
+      let num = phoneNumber.trim().replace(/\s/g, '');
+      if (!num.startsWith('+')) {
+        num = '+' + num;
+      }
+      
+      // Basic validation for common Indian formats without +91
+      if (num.length === 11 && num.startsWith('+0')) {
+         num = '+91' + num.substring(2);
+      } else if (num.length === 11 && !num.startsWith('+91')) {
+         num = '+91' + num.substring(1);
+      }
+      
+      const verifier = setupRecaptcha('recaptcha-container');
+      const confirmation = await signInWithPhoneNumber(auth, num, verifier);
+      return confirmation;
+    } catch (err: any) {
+      console.error("Phone login initiation failed", err);
+      // specific error for blocked domains
+      if (err.code === 'auth/unauthorized-domain') {
+        alert("Domain Not Authorized: Please follow the 'Step-by-Step' guide to add your app URL to Authorized Domains in Firebase Console.");
+      }
+      throw err;
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setView("home");
+    } catch (err) {
+      console.error("Logout failed", err);
+    }
+  };
+
+  const submitRating = async () => {
+    if (!user || userRating === 0) return;
+    setRatingSubmitting(true);
+    try {
+      await addDoc(collection(db, "ratings"), {
+        uid: user.uid,
+        userName: user.displayName || "CookGenix User",
+        email: user.email || null,
+        phoneNumber: user.phoneNumber || null,
+        rating: userRating,
+        feedback: feedback,
+        timestamp: serverTimestamp()
+      });
+      setShowRatingModal(false);
+      setUserRating(0);
+      setFeedback("");
+      alert("Dhanyawaad! Your feedback means a lot to us.");
+    } catch (err) {
+      console.error("Rating failed", err);
+    } finally {
+      setRatingSubmitting(false);
+    }
+  };
+
+  const isFavorite = (recipe: Recipe) => {
+    return favorites.some(fav => fav.name.trim().toLowerCase() === recipe.name.trim().toLowerCase());
+  };
+
+  const handleShare = async (recipe?: Recipe) => {
+    const text = recipe 
+      ? `Check out this recipe for ${recipe.name} from CookGenix!\n\n${recipe.method}`
+      : `I just found some amazing recipes based on my fridge ingredients using CookGenix!`;
+    
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'CookGenix Recipe',
+          text: text,
+          url: window.location.href
+        });
+      } catch (err) {
+        console.error("Share failed:", err);
+      }
+    } else {
+      // Fallback: Copy to clipboard
+      await navigator.clipboard.writeText(text);
+      alert("Recipe copied to clipboard!");
+    }
+  };
 
   const toggleDarkMode = () => {
     const newMode = !isDarkMode;
@@ -141,6 +358,8 @@ export default function App() {
       const mimeType = mimeTypePart.match(/:(.*?);/)?.[1] || "image/jpeg";
       const data = await analyzeFridgeImage(base64Data, mimeType);
       setResult(data);
+      // Trigger rating modal after a short delay
+      setTimeout(() => setShowRatingModal(true), 1500);
     } catch (err) {
       console.error(err);
       setError("Something went wrong while analyzing the ingredients. Please try again.");
@@ -171,8 +390,70 @@ export default function App() {
     }
   }, []);
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-bg-light dark:bg-bg-dark flex items-center justify-center">
+        <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
+          <ChefHat size={48} className="text-primary" />
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginScreen onLogin={handleLogin} onPhoneLogin={handlePhoneLogin} isDarkMode={isDarkMode} toggleDarkMode={toggleDarkMode} />;
+  }
+
   return (
     <div className={`min-h-screen ${isDarkMode ? 'bg-bg-dark text-white' : 'bg-bg-light text-gray-900'} font-sans selection:bg-primary/30 transition-colors duration-300 pb-24`}>
+      {/* Rating Modal */}
+      <AnimatePresence>
+        {showRatingModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className={`max-w-md w-full p-8 rounded-[32px] glass shadow-2xl relative ${isDarkMode ? 'bg-bg-dark text-white' : 'bg-white text-gray-900'}`}
+            >
+              <button onClick={() => setShowRatingModal(false)} className="absolute top-6 right-6 p-2"><X size={20} /></button>
+              <h3 className="text-2xl font-black mb-2 text-primary">Kaise Lagi Service?</h3>
+              <p className="text-sm opacity-70 mb-6 font-medium">Please rate your CookGenix experience!</p>
+              
+              <div className="flex justify-center gap-3 mb-8">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button 
+                    key={star} 
+                    onClick={() => setUserRating(star)}
+                    className={`transition-transform hover:scale-125 ${userRating >= star ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300'}`}
+                  >
+                    <Star size={32} />
+                  </button>
+                ))}
+              </div>
+
+              <textarea 
+                placeholder="Any suggestions or feedback? (Optional)"
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                className="w-full p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary transition-colors outline-none text-sm font-medium mb-6 min-h-[100px]"
+              />
+
+              <button 
+                onClick={submitRating}
+                disabled={userRating === 0 || ratingSubmitting}
+                className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg disabled:opacity-50 transition-opacity"
+              >
+                {ratingSubmitting ? "Submitting..." : "Submit Review"}
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* Permission Help Modal */}
       <AnimatePresence>
         {showPermissionHelp && (
@@ -259,17 +540,92 @@ export default function App() {
           <span className="text-xl font-extrabold tracking-tight">Cook<span className="text-primary italic">Genix</span></span>
         </div>
         
-        <button 
-          onClick={toggleDarkMode}
-          className={`p-2 rounded-xl transition-colors ${isDarkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10'}`}
-        >
-          {isDarkMode ? <Sun size={20} className="text-primary" /> : <Moon size={20} className="text-gray-600" />}
-        </button>
+        <div className="flex items-center gap-3">
+          {user && (
+            <div className="flex items-center gap-3 mr-2 p-1 pl-3 bg-black/5 dark:bg-white/5 rounded-2xl">
+              <span className="text-xs font-bold hidden sm:block">{user.displayName?.split(' ')[0]}</span>
+              {user.photoURL ? (
+                <img src={user.photoURL} alt={user.displayName || ""} className="w-8 h-8 rounded-xl object-cover" referrerPolicy="no-referrer" />
+              ) : (
+                <div className="w-8 h-8 rounded-xl bg-primary/20 flex items-center justify-center text-primary"><UserIcon size={16} /></div>
+              )}
+              <button 
+                onClick={handleLogout}
+                className="p-2 text-gray-400 hover:text-red-500 transition-colors"
+                title="Logout"
+              >
+                <LogOut size={18} />
+              </button>
+            </div>
+          )}
+          
+          <button 
+            onClick={() => setView(view === 'home' ? 'collection' : 'home')}
+            className={`p-2 rounded-xl transition-colors ${isDarkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10'}`}
+            title={view === 'home' ? 'My Collection' : 'Back to Home'}
+          >
+            {view === 'home' ? <Heart size={20} className="text-primary" /> : <Home size={20} className="text-gray-600 dark:text-gray-400" />}
+          </button>
+          
+          <button 
+            onClick={toggleDarkMode}
+            className={`p-2 rounded-xl transition-colors ${isDarkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10'}`}
+          >
+            {isDarkMode ? <Sun size={20} className="text-primary" /> : <Moon size={20} className="text-gray-600" />}
+          </button>
+        </div>
       </nav>
 
       <main className="max-w-4xl mx-auto px-6 pt-24">
         <AnimatePresence mode="wait">
-          {isCameraOpen ? (
+          {view === 'collection' ? (
+            <motion.div
+              key="collection"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-12"
+            >
+              <div className="text-center space-y-4">
+                <h2 className="text-4xl font-black italic">My <span className="text-primary">Collection</span></h2>
+                <p className="text-gray-500 font-medium">Your favorite hand-picked recipes.</p>
+              </div>
+
+              {favorites.length === 0 ? (
+                <div className="py-20 text-center glass rounded-[32px] border-dashed border-2 border-gray-200 dark:border-white/10">
+                  <Heart size={48} className="mx-auto mb-4 text-gray-300" />
+                  <p className="font-bold text-gray-400">Arre! Your collection is empty. Start saving some delicious recipes!</p>
+                  <button onClick={() => setView('home')} className="mt-6 text-primary font-black uppercase text-xs tracking-widest hover:underline">
+                    Find Recipes Now
+                  </button>
+                </div>
+              ) : (
+                <div className="grid gap-8">
+                  {favorites.map((recipe, index) => (
+                    <RecipeCard 
+                      key={index} 
+                      recipe={recipe} 
+                      isDarkMode={isDarkMode} 
+                      isFavorite={true}
+                      onFavorite={() => toggleFavorite(recipe)}
+                      onShare={() => handleShare(recipe)}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Permanent Rating Section */}
+              <RatingSection 
+                isDarkMode={isDarkMode} 
+                userRating={userRating} 
+                setUserRating={setUserRating} 
+                feedback={feedback} 
+                setFeedback={setFeedback} 
+                onSubmit={submitRating} 
+                submitting={ratingSubmitting} 
+              />
+            </motion.div>
+          ) : isCameraOpen ? (
             <motion.div
               key="camera"
               initial={{ opacity: 0, scale: 0.9 }}
@@ -525,17 +881,25 @@ export default function App() {
                     <h4 className="text-lg font-black uppercase tracking-widest text-primary/80">Tailored For You</h4>
                     <div className="grid gap-8">
                       {result.recipes.map((recipe, index) => (
-                        <RecipeCard key={index} recipe={recipe} index={index} isDarkMode={isDarkMode} />
+                        <RecipeCard 
+                          key={index} 
+                          recipe={recipe} 
+                          index={index} 
+                          isDarkMode={isDarkMode} 
+                          isFavorite={isFavorite(recipe)}
+                          onFavorite={() => toggleFavorite(recipe)}
+                          onShare={() => handleShare(recipe)}
+                        />
                       ))}
                     </div>
                   </div>
 
                   {/* Extra Buttons */}
                   <div className="flex flex-col sm:flex-row gap-4 justify-center py-10">
-                    <button className="flex items-center justify-center gap-3 px-8 py-4 glass rounded-2xl font-bold hover:bg-primary/10 transition-colors">
-                      <Heart size={20} /> Save Collection
-                    </button>
-                    <button className="flex items-center justify-center gap-3 px-8 py-4 glass rounded-2xl font-bold hover:bg-primary/10 transition-colors">
+                    <button 
+                      onClick={() => handleShare()}
+                      className="flex items-center justify-center gap-3 px-8 py-4 glass rounded-2xl font-bold hover:bg-primary/10 transition-colors"
+                    >
                       <Share2 size={20} /> Share Results
                     </button>
                     <button 
@@ -545,6 +909,17 @@ export default function App() {
                       <RotateCcw size={20} /> Try Another Photo
                     </button>
                   </div>
+
+                  {/* Permanent Rating Section */}
+                  <RatingSection 
+                    isDarkMode={isDarkMode} 
+                    userRating={userRating} 
+                    setUserRating={setUserRating} 
+                    feedback={feedback} 
+                    setFeedback={setFeedback} 
+                    onSubmit={submitRating} 
+                    submitting={ratingSubmitting} 
+                  />
                 </div>
               )}
             </motion.div>
@@ -553,12 +928,10 @@ export default function App() {
       </main>
 
       {/* Mobile Bottom Nav */}
-      <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-6 py-4 glass border border-white/20 rounded-full shadow-2xl flex items-center gap-10 md:gap-16`}>
-        <NavButton icon={<Home size={22} />} active />
-        <NavButton icon={<History size={22} />} />
-        <PlusButton onClick={() => handleReset()} />
-        <NavButton icon={<Heart size={22} />} />
-        <NavButton icon={<ChevronRight size={22} className="rotate-90" />} />
+      <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-8 py-4 glass border border-white/20 rounded-full shadow-2xl flex items-center gap-16`}>
+        <NavButton icon={<Home size={22} />} active={view === 'home'} onClick={() => setView('home')} />
+        <PlusButton onClick={() => { handleReset(); setView('home'); }} />
+        <NavButton icon={<Heart size={22} />} active={view === 'collection'} onClick={() => setView('collection')} />
       </div>
 
       {/* Footer */}
@@ -595,14 +968,9 @@ function CaptureCard({ title, desc, icon, onClick, primary, isDarkMode }: any) {
   );
 }
 
-function RecipeCard({ recipe, index, isDarkMode }: any) {
+function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any) {
   const [isOpen, setIsOpen] = useState(false);
-  const typeIcon = () => {
-    if (recipe.type?.toLowerCase().includes("breakfast")) return <div className="text-orange-500"><UtensilsCrossed size={16} /></div>;
-    if (recipe.type?.toLowerCase().includes("snack")) return <div className="text-green-500"><Zap size={16} /></div>;
-    return <div className="text-blue-500"><ChefHat size={16} /></div>;
-  };
-
+  
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -612,16 +980,33 @@ function RecipeCard({ recipe, index, isDarkMode }: any) {
     >
       <div className="p-8">
         <div className="flex justify-between items-start mb-6">
-          <div className="flex items-center gap-3 px-4 py-2 glass rounded-2xl">
-            {typeIcon()}
-            <span className="text-[10px] font-black uppercase tracking-widest">{recipe.type}</span>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3 px-4 py-2 glass rounded-2xl">
+              <span className="text-[10px] font-black uppercase tracking-widest">{recipe.type}</span>
+            </div>
+            {recipe.cookingTime && (
+              <div className="flex items-center gap-2 px-3 py-2 glass rounded-2xl text-[10px] font-black uppercase tracking-widest text-primary">
+                <Clock size={12} />
+                <span>{recipe.cookingTime}</span>
+              </div>
+            )}
           </div>
-          <motion.button 
-            whileTap={{ scale: 0.8 }}
-            className="w-10 h-10 rounded-full glass flex items-center justify-center text-primary"
-          >
-            <Heart size={18} />
-          </motion.button>
+          <div className="flex items-center gap-2">
+            <motion.button 
+              whileTap={{ scale: 0.8 }}
+              onClick={onShare}
+              className="w-10 h-10 rounded-full glass flex items-center justify-center text-gray-400 hover:text-primary transition-colors"
+            >
+              <Share2 size={18} />
+            </motion.button>
+            <motion.button 
+              whileTap={{ scale: 0.8 }}
+              onClick={onFavorite}
+              className={`w-10 h-10 rounded-full glass flex items-center justify-center transition-colors ${isFavorite ? 'text-primary fill-primary' : 'text-gray-400 hover:text-primary'}`}
+            >
+              <Heart size={18} />
+            </motion.button>
+          </div>
         </div>
 
         <h3 className="text-2xl font-black mb-4 leading-tight">{recipe.name}</h3>
@@ -662,9 +1047,12 @@ function RecipeCard({ recipe, index, isDarkMode }: any) {
   );
 }
 
-function NavButton({ icon, active }: any) {
+function NavButton({ icon, active, onClick }: any) {
   return (
-    <button className={`p-2 transition-all ${active ? 'text-primary scale-110' : 'text-gray-400 hover:text-primary'}`}>
+    <button 
+      onClick={onClick}
+      className={`p-2 transition-all ${active ? 'text-primary scale-125' : 'text-gray-400 hover:text-primary hover:scale-110'}`}
+    >
       {icon}
     </button>
   );
@@ -678,5 +1066,176 @@ function PlusButton({ onClick }: any) {
     >
       <Plus size={28} />
     </button>
+  );
+}
+
+function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any) {
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [otp, setOtp] = useState("");
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
+  const [step, setStep] = useState<"phone" | "otp">("phone");
+  const [loading, setLoading] = useState(false);
+
+  const initiatePhoneLogin = async () => {
+    if (!phoneNumber) return;
+    setLoading(true);
+    try {
+      const confirmation = await onPhoneLogin(phoneNumber);
+      setConfirmationResult(confirmation);
+      setStep("otp");
+    } catch (err) {
+      alert("Please ensure your number is in International format (e.g., +919876543210)");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verifyOtp = async () => {
+    if (!otp || !confirmationResult) return;
+    setLoading(true);
+    try {
+      await confirmationResult.confirm(otp);
+    } catch (err) {
+      alert("Invalid OTP code. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className={`min-h-screen flex items-center justify-center p-6 ${isDarkMode ? 'bg-bg-dark text-white' : 'bg-bg-light text-gray-900'}`}>
+      <div id="recaptcha-container"></div>
+      <div className="max-w-md w-full space-y-12">
+        <div className="text-center space-y-6">
+          <motion.div 
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            className="w-20 h-20 bg-primary rounded-3xl mx-auto flex items-center justify-center shadow-2xl shadow-primary/20"
+          >
+            <ChefHat size={40} className="text-white" />
+          </motion.div>
+          <div className="space-y-2">
+            <h1 className="text-4xl font-black italic tracking-tight">Cook<span className="text-primary">Genix</span></h1>
+            <p className="text-gray-500 font-medium whitespace-pre-line">
+              {step === "phone" ? "Please login to start your culinary journey." : `OTP sent to ${phoneNumber}`}
+            </p>
+          </div>
+        </div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass p-8 rounded-[40px] shadow-2xl border-2 border-white/10"
+        >
+          <div className="space-y-4">
+            {step === "phone" ? (
+              <>
+                <button 
+                  onClick={onLogin}
+                  className="w-full flex items-center justify-center gap-4 py-4 px-6 bg-white text-gray-900 rounded-2xl font-black shadow-lg hover:scale-[1.02] transition-transform border border-gray-100"
+                >
+                  <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
+                  Sign in with Google
+                </button>
+                <div className="relative py-4">
+                  <div className="absolute inset-0 flex items-center"><div className="w-full h-px bg-black/5 dark:bg-white/10"></div></div>
+                  <div className="relative flex justify-center text-[10px] font-black uppercase tracking-widest text-gray-400"><span className="px-4 bg-white dark:bg-bg-dark rounded-full">Or Mobile</span></div>
+                </div>
+                
+                <div className="space-y-2">
+                  <input 
+                    type="tel" 
+                    placeholder="+91 00000 00000"
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    className="w-full p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary transition-colors outline-none font-bold"
+                  />
+                  <button 
+                    onClick={initiatePhoneLogin}
+                    disabled={loading || !phoneNumber}
+                    className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg disabled:opacity-50 transition-opacity"
+                  >
+                    {loading ? "Sending..." : "Send OTP"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-4">
+                <input 
+                  type="text" 
+                  placeholder="Enter 6-digit OTP"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value)}
+                  maxLength={6}
+                  className="w-full p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary transition-colors outline-none font-bold text-center tracking-[1em]"
+                />
+                <button 
+                  onClick={verifyOtp}
+                  disabled={loading || otp.length < 6}
+                  className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg disabled:opacity-50 transition-opacity"
+                >
+                  {loading ? "Verifying..." : "Verify & Login"}
+                </button>
+                <button 
+                  onClick={() => setStep("phone")}
+                  className="w-full py-2 text-primary font-bold text-xs uppercase"
+                >
+                  Change Number
+                </button>
+              </div>
+            )}
+          </div>
+        </motion.div>
+
+        <div className="text-center">
+          <button onClick={toggleDarkMode} className="text-xs font-black uppercase tracking-widest opacity-40 hover:opacity-100 transition-opacity flex items-center gap-2 mx-auto">
+            {isDarkMode ? <Sun size={14} /> : <Moon size={14} />} Switch Appearance
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RatingSection({ isDarkMode, userRating, setUserRating, feedback, setFeedback, onSubmit, submitting }: any) {
+  return (
+    <div className={`mt-20 p-8 rounded-[40px] border-2 ${isDarkMode ? 'bg-white/5 border-white/5' : 'bg-white border-gray-100 shadow-xl'}`}>
+      <div className="max-w-xl mx-auto text-center space-y-6">
+        <div className="w-16 h-16 bg-primary/10 rounded-2xl mx-auto flex items-center justify-center text-primary">
+          <Star size={32} />
+        </div>
+        <div className="space-y-2">
+          <h3 className="text-2xl font-black">Help Us Grow! 🚀</h3>
+          <p className="text-gray-500 font-medium">Your feedback helps CookGenix create even better recipes for you.</p>
+        </div>
+
+        <div className="flex justify-center gap-3">
+          {[1, 2, 3, 4, 5].map((star) => (
+            <button 
+              key={star} 
+              onClick={() => setUserRating(star)}
+              className={`transition-transform hover:scale-125 ${userRating >= star ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300'}`}
+            >
+              <Star size={32} />
+            </button>
+          ))}
+        </div>
+
+        <textarea 
+          placeholder="Share your experience or suggest features..."
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+          className="w-full p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary transition-colors outline-none text-sm font-medium min-h-[100px]"
+        />
+
+        <button 
+          onClick={onSubmit}
+          disabled={userRating === 0 || submitting}
+          className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg disabled:opacity-50 transition-opacity uppercase tracking-wider text-sm"
+        >
+          {submitting ? "Sending Feedback..." : "Submit Review"}
+        </button>
+      </div>
+    </div>
   );
 }
