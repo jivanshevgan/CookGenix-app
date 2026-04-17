@@ -131,7 +131,9 @@ export default function App() {
       try {
         (window as any).recaptchaVerifier.clear();
         (window as any).recaptchaVerifier = null;
-      } catch (e) {}
+      } catch (e) {
+        console.warn("reCAPTCHA Cleanup:", e);
+      }
     }
     
     // Ensure container exists and is empty
@@ -148,11 +150,12 @@ export default function App() {
     try {
       const verifier = new RecaptchaVerifier(auth, containerId, {
         'size': 'invisible',
-        'callback': () => {
+        'callback': (response: any) => {
           console.log("reCAPTCHA solved");
         },
         'expired-callback': () => {
           console.log("reCAPTCHA expired");
+          alert("Security verification expired. Please try sending OTP again.");
         }
       });
       
@@ -160,7 +163,7 @@ export default function App() {
       return verifier;
     } catch (err) {
       console.error("reCAPTCHA creation failed", err);
-      throw err;
+      throw new Error("Security verification (reCAPTCHA) failed to initialize.");
     }
   };
 
@@ -169,15 +172,11 @@ export default function App() {
       setError(null);
       // Ensure number is trimmed and has + prefix
       let num = phoneNumber.trim().replace(/\s/g, '');
-      if (!num.startsWith('+')) {
-        num = '+' + num;
-      }
       
-      // Basic validation for common Indian formats without +91
-      if (num.length === 11 && num.startsWith('+0')) {
-         num = '+91' + num.substring(2);
-      } else if (num.length === 11 && !num.startsWith('+91')) {
-         num = '+91' + num.substring(1);
+      // Auto-format for India if needed
+      if (num.startsWith('0')) num = num.substring(1);
+      if (!num.startsWith('+')) {
+        num = num.length === 10 ? '+91' + num : '+' + num;
       }
       
       const verifier = setupRecaptcha('recaptcha-container');
@@ -191,6 +190,8 @@ export default function App() {
         alert(`SIGN-IN BLOCKED: Domain "${currentDomain}" is not authorized.\n\nPLEASE FIX THIS:\n1. Open Firebase Console\n2. Go to Authentication -> Settings -> Authorized Domains\n3. Add "${currentDomain}" to the list.`);
       } else if (err.code === 'auth/invalid-phone-number') {
         alert("Invalid phone number. Please include the country code (e.g., +91).");
+      } else if (err.code === 'auth/too-many-requests') {
+        alert("Too many attempts. This device/number has been temporarily blocked for security. Please try again later.");
       } else {
         alert(`Login Error: ${err.message}`);
       }
