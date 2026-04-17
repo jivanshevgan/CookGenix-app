@@ -131,11 +131,18 @@ export default function App() {
       try {
         (window as any).recaptchaVerifier.clear();
         (window as any).recaptchaVerifier = null;
-        const container = document.getElementById(containerId);
-        if (container) container.innerHTML = "";
-      } catch (e) {
-        console.warn("Resetting reCAPTCHA...", e);
-      }
+      } catch (e) {}
+    }
+    
+    // Ensure container exists and is empty
+    const container = document.getElementById(containerId);
+    if (container) {
+      container.innerHTML = "";
+    } else {
+      // Create it if it doesn't exist (safety)
+      const newDiv = document.createElement('div');
+      newDiv.id = containerId;
+      document.body.appendChild(newDiv);
     }
     
     try {
@@ -1089,13 +1096,19 @@ function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any)
   const [step, setStep] = useState<"phone" | "otp">("phone");
   const [loading, setLoading] = useState(false);
   const [isInIframe, setIsInIframe] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     setIsInIframe(window !== window.parent);
+    setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
   }, []);
 
   const openInNewTab = () => {
-    window.open(window.location.href, '_blank');
+    const url = window.location.href;
+    const newWindow = window.open(url, '_blank');
+    if (!newWindow) {
+      alert("Please allow pop-ups to fix the login process.");
+    }
   };
 
   const initiatePhoneLogin = async () => {
@@ -1145,27 +1158,51 @@ function LoginScreen({ onLogin, onPhoneLogin, isDarkMode, toggleDarkMode }: any)
         </div>
 
         <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="glass p-8 rounded-[40px] shadow-2xl border-2 border-white/10"
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="relative glass p-8 rounded-[40px] shadow-2xl border-2 border-white/10 overflow-hidden"
         >
+          {/* Mobile Iframe Fix Header */}
+          {isInIframe && isMobile && (
+            <div className="mb-8 p-6 bg-primary/20 rounded-[24px] border border-primary/30 text-center space-y-4">
+              <div className="flex items-center justify-center gap-2 text-primary">
+                <Zap size={20} className="fill-primary" />
+                <span className="font-black uppercase tracking-widest text-[10px]">Mobile Fix Required</span>
+              </div>
+              <p className="text-xs font-bold leading-relaxed opacity-80">
+                Indian mobile browsers block Google Login inside our app preview for safety. 
+              </p>
+              <button 
+                onClick={openInNewTab}
+                className="w-full py-3 bg-primary text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-xl hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2"
+              >
+                🚀 Tap Here to Fix Login
+              </button>
+            </div>
+          )}
+
           <div className="space-y-4">
             {step === "phone" ? (
               <>
                 <button 
                   onClick={onLogin}
-                  className="w-full flex items-center justify-center gap-4 py-4 px-6 bg-white text-gray-900 rounded-2xl font-black shadow-lg hover:scale-[1.02] transition-transform border border-gray-100"
+                  disabled={isInIframe && isMobile}
+                  className={`w-full flex items-center justify-center gap-4 py-4 px-6 rounded-2xl font-black shadow-lg transition-all ${
+                    isInIframe && isMobile 
+                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed grayscale' 
+                    : 'bg-white text-gray-900 border border-gray-100 hover:scale-[1.02]'
+                  }`}
                 >
                   <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
                   Sign in with Google
                 </button>
                 
-                {isInIframe && (
+                {isInIframe && !isMobile && (
                   <button 
                     onClick={openInNewTab}
                     className="w-full py-2 text-[10px] font-black uppercase tracking-widest text-primary hover:underline flex items-center justify-center gap-2"
                   >
-                    <Share2 size={12} /> Having trouble on Mobile? Open in New Tab
+                    <Share2 size={12} /> Having trouble? Open in New Tab
                   </button>
                 )}
 
