@@ -30,7 +30,15 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
         body: JSON.stringify(body),
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      let data;
+      
+      try {
+        data = JSON.parse(text);
+      } catch (parseErr) {
+        console.error("Raw response:", text);
+        throw new Error(`Server error (${response.status}): The server returned an invalid response.`);
+      }
 
       if (!response.ok) {
         throw new Error(data.error || "Something went wrong");

@@ -48,61 +48,85 @@ async function startServer() {
   // --- Auth Endpoints ---
 
   app.post("/api/auth/signup", async (req: any, res: any) => {
-    const { name, email, password } = req.body;
+    try {
+      const { name, email, password } = req.body;
 
-    if (!name || !email || !password) {
-      return res.status(400).json({ error: "Please fill all fields" });
+      if (!name || !email || !password) {
+        return res.status(400).json({ error: "Please fill all fields" });
+      }
+
+      const users = getUsers();
+      if (users.find((u: any) => u.email === email)) {
+        return res.status(400).json({ error: "Email already in use" });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const newUser = {
+        uid: Math.random().toString(36).substring(2, 15),
+        name,
+        email,
+        password: hashedPassword,
+        createdAt: new Date().toISOString()
+      };
+
+      users.push(newUser);
+      saveUsers(users);
+
+      if (!JWT_SECRET) {
+        console.error("JWT_SECRET is missing!");
+        return res.status(500).json({ error: "Server configuration error" });
+      }
+
+      const token = jwt.sign({ uid: newUser.uid, email: newUser.email }, JWT_SECRET, { expiresIn: "7d" });
+      res.cookie("auth_token", token, { 
+        httpOnly: true, 
+        secure: true, // Use secure on mobile for cross-site cookies
+        sameSite: "none", // Allow cross-site for preview environments
+        maxAge: 7 * 24 * 60 * 60 * 1000 
+      });
+
+      const { password: _, ...userWithoutPassword } = newUser;
+      res.json({ user: userWithoutPassword, token });
+    } catch (error) {
+      console.error("Signup error:", error);
+      res.status(500).json({ error: "An unexpected error occurred during signup" });
     }
-
-    const users = getUsers();
-    if (users.find((u: any) => u.email === email)) {
-      return res.status(400).json({ error: "Email already in use" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = {
-      uid: Math.random().toString(36).substring(2, 15),
-      name,
-      email,
-      password: hashedPassword,
-      createdAt: new Date().toISOString()
-    };
-
-    users.push(newUser);
-    saveUsers(users);
-
-    const token = jwt.sign({ uid: newUser.uid, email: newUser.email }, JWT_SECRET, { expiresIn: "7d" });
-    res.cookie("auth_token", token, { 
-      httpOnly: true, 
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000 
-    });
-
-    const { password: _, ...userWithoutPassword } = newUser;
-    res.json({ user: userWithoutPassword, token });
   });
 
   app.post("/api/auth/login", async (req: any, res: any) => {
-    const { email, password } = req.body;
+    try {
+      const { email, password } = req.body;
 
-    const users = getUsers();
-    const user = users.find((u: any) => u.email === email);
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required" });
+      }
 
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(401).json({ error: "Invalid email or password" });
+      const users = getUsers();
+      const user = users.find((u: any) => u.email === email);
+
+      if (!user || !(await bcrypt.compare(password, user.password))) {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+
+      if (!JWT_SECRET) {
+        console.error("JWT_SECRET is missing!");
+        return res.status(500).json({ error: "Server configuration error" });
+      }
+
+      const token = jwt.sign({ uid: user.uid, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
+      res.cookie("auth_token", token, { 
+        httpOnly: true, 
+        secure: true, 
+        sameSite: "none",
+        maxAge: 7 * 24 * 60 * 60 * 1000
+      });
+
+      const { password: _, ...userWithoutPassword } = user;
+      res.json({ user: userWithoutPassword, token });
+    } catch (error) {
+      console.error("Login error:", error);
+      res.status(500).json({ error: "An unexpected error occurred during login" });
     }
-
-    const token = jwt.sign({ uid: user.uid, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
-    res.cookie("auth_token", token, { 
-      httpOnly: true, 
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000
-    });
-
-    const { password: _, ...userWithoutPassword } = user;
-    res.json({ user: userWithoutPassword, token });
   });
 
   app.post("/api/auth/logout", (req, res) => {
