@@ -64,8 +64,19 @@ export default function App() {
         const response = await fetch("/api/auth/me", {
           headers: { "Authorization": `Bearer ${token}` }
         });
+        
+        const text = await response.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (parseErr) {
+          console.error("Auto-login check failed to parse response", text);
+          localStorage.removeItem("auth_token");
+          setAuthStatus("unauthenticated");
+          return;
+        }
+
         if (response.ok) {
-          const data = await response.json();
           setUser(data.user);
           setAuthStatus("authenticated");
           if (data.user.favorites) {

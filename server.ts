@@ -66,30 +66,28 @@ async function startServer() {
         name,
         email,
         password: hashedPassword,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        favorites: []
       };
 
       users.push(newUser);
       saveUsers(users);
 
-      if (!JWT_SECRET) {
-        console.error("JWT_SECRET is missing!");
-        return res.status(500).json({ error: "Server configuration error" });
-      }
-
       const token = jwt.sign({ uid: newUser.uid, email: newUser.email }, JWT_SECRET, { expiresIn: "7d" });
       res.cookie("auth_token", token, { 
         httpOnly: true, 
-        secure: true, // Use secure on mobile for cross-site cookies
-        sameSite: "none", // Allow cross-site for preview environments
+        secure: false, // Switch to false for better dev/mobile compatibility
+        sameSite: "lax",
         maxAge: 7 * 24 * 60 * 60 * 1000 
       });
 
       const { password: _, ...userWithoutPassword } = newUser;
-      res.json({ user: userWithoutPassword, token });
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(200).send(JSON.stringify({ user: userWithoutPassword, token }));
     } catch (error) {
       console.error("Signup error:", error);
-      res.status(500).json({ error: "An unexpected error occurred during signup" });
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(500).send(JSON.stringify({ error: "An unexpected error occurred during signup" }));
     }
   });
 
@@ -108,24 +106,21 @@ async function startServer() {
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
-      if (!JWT_SECRET) {
-        console.error("JWT_SECRET is missing!");
-        return res.status(500).json({ error: "Server configuration error" });
-      }
-
       const token = jwt.sign({ uid: user.uid, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
       res.cookie("auth_token", token, { 
         httpOnly: true, 
-        secure: true, 
-        sameSite: "none",
+        secure: false, 
+        sameSite: "lax",
         maxAge: 7 * 24 * 60 * 60 * 1000
       });
 
       const { password: _, ...userWithoutPassword } = user;
-      res.json({ user: userWithoutPassword, token });
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(200).send(JSON.stringify({ user: userWithoutPassword, token }));
     } catch (error) {
       console.error("Login error:", error);
-      res.status(500).json({ error: "An unexpected error occurred during login" });
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(500).send(JSON.stringify({ error: "An unexpected error occurred during login" }));
     }
   });
 
