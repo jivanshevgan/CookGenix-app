@@ -1,8 +1,17 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChefHat, Mail, Lock, User, Phone, ArrowRight, Loader2, Sparkles, X, CheckCircle2 } from "lucide-react";
-import { auth, googleProvider, RecaptchaVerifier } from "../firebase";
-import { signInWithPopup, signInWithPhoneNumber, ConfirmationResult } from "firebase/auth";
+import { auth, googleProvider, RecaptchaVerifier, db } from "../firebase";
+import { 
+  signInWithPopup, 
+  signInWithPhoneNumber, 
+  ConfirmationResult, 
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile
+} from "firebase/auth";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 
 interface AuthScreenProps {
   onAuthSuccess: (user: any, token: string) => void;
@@ -27,26 +36,34 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
     phoneNumber: ""
   });
 
-  // Sync social login with local DB
-  const syncSocialUser = async (firebaseUser: any) => {
+  // Sync social login with Firestore
+  const syncUserToFirestore = async (firebaseUser: any, additionalData: any = {}) => {
     try {
-      const response = await fetch("/api/auth/social-sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: firebaseUser.uid,
-          email: firebaseUser.email,
-          name: firebaseUser.displayName,
-          phoneNumber: firebaseUser.phoneNumber,
-          photoURL: firebaseUser.photoURL
-        })
-      });
+      const userDocRef = doc(db, "users", firebaseUser.uid);
+      const userDoc = await getDoc(userDocRef);
+      
+      const userData = {
+        uid: firebaseUser.uid,
+        name: additionalData.name || firebaseUser.displayName || "Chef",
+        email: firebaseUser.email || null,
+        phoneNumber: firebaseUser.phoneNumber || null,
+        photoURL: firebaseUser.photoURL || null,
+        provider: firebaseUser.providerData[0]?.providerId || "email",
+        updatedAt: serverTimestamp(),
+      };
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
-      onAuthSuccess(data.user, data.token);
+      if (!userDoc.exists()) {
+        (userData as any).createdAt = serverTimestamp();
+      }
+
+      await setDoc(userDocRef, userData, { merge: true });
+      
+      // Also get the token for the legacy session management if needed
+      const token = await firebaseUser.getIdToken();
+      onAuthSuccess(userData, token);
     } catch (err: any) {
-      setError("Social Sync Failed: " + err.message);
+      console.error("Firestore Sync Error:", err);
+      setError("Storage Error: " + err.message);
     }
   };
 
@@ -55,7 +72,7 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
     setError(null);
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      await syncSocialUser(result.user);
+      await syncUserToFirestore(result.user);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -100,10 +117,31 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
     setError(null);
     try {
       const result = await confirmationResult.confirm(otp);
-      await syncSocialUser(result.user);
+      await syncUserToFirestore(result.user);
       setShowPhoneModal(false);
     } catch (err: any) {
       setError("OTP Failed: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.email) {
+      setError("Please enter your email first");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await sendPasswordResetEmail(auth, formData.email);
+      setResetSent(true);
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -114,22 +152,17 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
     setLoading(true);
     setError(null);
 
-    const endpoint = isLogin ? "/api/auth/login" : "/api/auth/signup";
-    
     try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData)
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Authentication failed");
+      let userCredential;
+      if (isLogin) {
+        userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
+      } else {
+        userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+        if (formData.name) {
+          await updateProfile(userCredential.user, { displayName: formData.name });
+        }
       }
-
-      onAuthSuccess(data.user, data.token);
+      await syncUserToFirestore(userCredential.user, { name: formData.name });
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -210,7 +243,18 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
             </div>
 
             <div className="space-y-2">
-              <label className="text-xs font-black uppercase tracking-widest opacity-50 ml-2">Password</label>
+              <div className="flex justify-between items-center px-2">
+                <label className="text-xs font-black uppercase tracking-widest opacity-50">Password</label>
+                {isLogin && (
+                  <button 
+                    type="button"
+                    onClick={() => setShowForgotModal(true)}
+                    className="text-[10px] font-bold text-primary hover:underline"
+                  >
+                    Forgot?
+                  </button>
+                )}
+              </div>
               <div className="relative">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                 <input 
@@ -225,13 +269,19 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
             </div>
 
             {error && (
-              <motion.p 
+              <motion.div 
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                className="text-red-500 text-xs font-bold text-center bg-red-500/10 py-2 rounded-lg"
+                className="space-y-3"
               >
-                {error}
-              </motion.p>
+                <p className="text-red-500 text-xs font-bold text-center bg-red-500/10 py-2 rounded-lg">
+                  {error}
+                </p>
+                <div className="p-3 bg-primary/5 rounded-xl border border-primary/10 text-[10px] text-center">
+                  <p className="font-bold text-primary mb-1 uppercase tracking-wider">Mobile Tip</p>
+                  <p className="opacity-70">If login fails on mobile, try opening the app in a <strong>New Tab</strong> via the browser menu.</p>
+                </div>
+              </motion.div>
             )}
 
             <button 
@@ -288,10 +338,71 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
         <div className="text-center">
           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center justify-center gap-2">
             <Sparkles size={10} className="text-primary" />
-            Complete Auth with JSON Data Storage
+            Production Ready with Firebase Auth & Firestore
           </p>
         </div>
       </div>
+
+      {/* Forgot Password Modal */}
+      <AnimatePresence>
+        {showForgotModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md"
+          >
+             <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className={`max-w-md w-full p-8 rounded-[40px] glass shadow-2xl relative ${isDarkMode ? "bg-bg-dark text-white" : "bg-white text-gray-900"}`}
+            >
+              <button onClick={() => { setShowForgotModal(false); setResetSent(false); }} className="absolute top-6 right-6 p-2"><X size={20} /></button>
+              
+              <h3 className="text-2xl font-black italic mb-6">Reset <span className="text-primary">Password</span></h3>
+
+              {resetSent ? (
+                <div className="text-center space-y-4">
+                  <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto text-primary">
+                    <CheckCircle2 size={32} />
+                  </div>
+                  <p className="font-bold">Instructions sent to your email!</p>
+                  <button 
+                    onClick={() => { setShowForgotModal(false); setResetSent(false); }}
+                    className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg"
+                  >
+                    Back to Login
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleForgotPassword} className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black uppercase tracking-widest opacity-50 ml-2">Confirm your Email</label>
+                    <div className="relative">
+                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                      <input 
+                        required
+                        type="email" 
+                        placeholder="chef@cookgenix.com"
+                        className="w-full pl-12 pr-4 py-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary transition-colors outline-none font-bold shadow-inner"
+                        value={formData.email}
+                        onChange={e => setFormData({ ...formData, email: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <button 
+                    disabled={loading}
+                    className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                  >
+                    {loading ? <Loader2 className="animate-spin" /> : "Send Reset Link"}
+                  </button>
+                </form>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Phone OTP Modal */}
       <AnimatePresence>

@@ -1,114 +1,63 @@
-// ===============================================================
-// Assumed Data Model
-// ===============================================================
-//
-// Collection: users
-// Document ID: {uid}
-// Fields:
-//   - uid: string (required) - Firebase Auth UID
-//   - name: string (required) - Display Name
-//   - email: string (optional) - User Email
-//   - phoneNumber: string (optional) - User Mobile
-//   - loginType: string (required) - google/otp/password
-//   - lastLogin: timestamp (required) - Recent activity
-//   - createdAt: timestamp (required) - Profile creation
-//
-// Collection: users/{uid}/favorites
-// Document ID: {recipeId}
-// Fields:
-//   - id: string (required) - Recipe ID
-//   - name: string (required) - Recipe Name
-//   - type: string (required) - e.g. Breakfast
-//   - ingredients: list (required) - List of strings
-//   - method: string (required) - Cooking steps
-//   - cookingTime: string - Time
-//   - savedAt: timestamp (required) - When saved
-//
-// Collection: ratings
-// Document ID: {ratingId}
-// Fields:
-//   - uid: string (required) - User who rated
-//   - userName: string - Cached name
-//   - rating: number (required) - 1 to 5
-//   - feedback: string - Optional text
-//   - timestamp: timestamp (required) - Submission time
-//
-// ===============================================================
-
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
 
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
-    
-    function isAuthenticated() {
+    // Helper functions
+    function isSignedIn() {
       return request.auth != null;
     }
-    
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-    
-    function isAdmin() {
-      return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "jeevanshevgan13@gmail.com" && request.auth.token.email_verified == true)); 
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
     }
 
-    function isValidEmail(email) {
-      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // Domain Validators
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // User entity validation
     function isValidUser(data) {
-      return data.uid == request.auth.uid &&
-             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.loginType in ['google', 'otp', 'password'] &&
-             (!('email' in data) || isValidEmail(data.email));
+      return data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128
+          && data.name is string && data.name.size() > 0 && data.name.size() <= 128
+          && (data.email == null || (data.email is string && data.email.size() <= 256))
+          && (data.phoneNumber == null || (data.phoneNumber is string && data.phoneNumber.size() <= 32))
+          && (data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 1024))
+          && data.provider in ['google', 'phone', 'email']
+          && data.createdAt is timestamp
+          && data.updatedAt is timestamp;
     }
 
-    function isValidRating(data) {
-      return data.uid == request.auth.uid &&
-             data.rating is int && data.rating >= 1 && data.rating <= 5 &&
-             (!('feedback' in data) || (data.feedback is string && data.feedback.size() < 1000));
-    }
-
-    function isValidFavorite(data) {
-      return data.name is string && data.name.size() > 0 &&
-             data.method is string && data.method.size() > 0 &&
-             data.ingredients is list;
-    }
-
-    // ===============================================================
-    // Rules
-    // ===============================================================
-
-    // User Profile
-    match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isOwner(userId) && isValidUser(request.resource.data);
-      allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
-                      request.resource.data.createdAt == resource.data.createdAt;
+    match /users/{uid} {
+      allow get: if isOwner(uid);
+      allow list: if false; // Users cannot list other users
       
-      // User Favorites
-      match /favorites/{recipeId} {
-        allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidFavorite(request.resource.data);
-        allow delete: if isOwner(userId);
-      }
-    }
+      allow create: if isOwner(uid) 
+          && isValidId(uid) 
+          && isValidUser(incoming())
+          && incoming().uid == uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
 
-    // App Ratings
-    match /ratings/{ratingId} {
-      allow read: if isAdmin();
-      allow create: if isAuthenticated() && isValidRating(request.resource.data);
-    }
-    
-    // Default deny
-    match /{path=**} {
-      allow read, write: if false;
+      allow update: if isOwner(uid)
+          && isValidUser(incoming())
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'phoneNumber', 'photoURL', 'provider', 'updatedAt']);
+      
+      allow delete: if isOwner(uid);
     }
   }
 }

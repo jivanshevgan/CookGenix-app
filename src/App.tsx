@@ -7,9 +7,12 @@ import {
   Plus, LogOut, User as UserIcon, Star, Clock
 } from "lucide-react";
 import { analyzeFridgeImage, type AnalysisResponse, type Recipe } from "./lib/gemini";
+import { auth, db } from "./firebase";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 import { 
   doc, 
   setDoc, 
+  getDoc,
   collection, 
   onSnapshot, 
   query, 
@@ -41,32 +44,39 @@ export default function App() {
 
   // Load favorites and check auth on mount
   useEffect(() => {
-    const checkAuth = async () => {
-      const savedToken = localStorage.getItem("auth_token");
-      if (!savedToken) {
-        setAuthStatus("unauthenticated");
-        return;
-      }
-
-      try {
-        const response = await fetch("/api/auth/me", {
-          headers: { "Authorization": `Bearer ${savedToken}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setUser(data.user);
+    // Firebase Auth Listener
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          // Fetch user profile from Firestore
+          const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
+          if (userDoc.exists()) {
+            setUser(userDoc.data());
+          } else {
+            // Fallback for new users or if sync hasn't happened yet
+            setUser({
+              uid: firebaseUser.uid,
+              name: firebaseUser.displayName || "Chef",
+              email: firebaseUser.email,
+              photoURL: firebaseUser.photoURL,
+              provider: firebaseUser.providerData[0]?.providerId
+            });
+          }
+          const token = await firebaseUser.getIdToken();
+          setToken(token);
+          localStorage.setItem("auth_token", token);
           setAuthStatus("authenticated");
-        } else {
-          localStorage.removeItem("auth_token");
+        } catch (err) {
+          console.error("Profile fetch error", err);
           setAuthStatus("unauthenticated");
         }
-      } catch (err) {
-        console.error("Auth check failed", err);
+      } else {
+        setUser(null);
+        setToken(null);
+        localStorage.removeItem("auth_token");
         setAuthStatus("unauthenticated");
       }
-    };
-
-    checkAuth();
+    });
 
     const saved = localStorage.getItem("cookgenix_favorites");
     if (saved) {
@@ -81,23 +91,23 @@ export default function App() {
     if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
       setIsDarkMode(true);
     }
+
+    return () => unsubscribe();
   }, []);
 
-  const handleAuthSuccess = (userData: any, userToken: string) => {
+  const handleAuthSuccess = async (userData: any, userToken: string) => {
+    // This is now handled by the observer, but we set local state for immediate feedback
     setUser(userData);
     setToken(userToken);
-    localStorage.setItem("auth_token", userToken);
     setAuthStatus("authenticated");
   };
 
   const handleLogout = async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } catch (e) {}
-    setUser(null);
-    setToken(null);
-    localStorage.removeItem("auth_token");
-    setAuthStatus("unauthenticated");
+      await signOut(auth);
+    } catch (e) {
+      console.error("Logout error", e);
+    }
   };
 
   // Save favorites to local storage whenever they change
