@@ -21,6 +21,10 @@
     "/users/{uid}": {
       "schema": "User",
       "description": "User profiles stored by their unique UID"
+    },
+    "/_health/check": {
+      "schema": { "type": "object", "properties": { "status": { "type": "string" } } },
+      "description": "System health check document"
     }
   }
 }

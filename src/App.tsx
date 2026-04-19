@@ -4,30 +4,14 @@ import {
   Camera, ChefHat, Sparkles, UtensilsCrossed, RefreshCcw, 
   CheckCircle2, ChevronRight, Info, X, Zap, RotateCcw, 
   Image as ImageIcon, Moon, Sun, Heart, Share2, Home, 
-  Plus, LogOut, User as UserIcon, Star, Clock
+  Plus, Star, Clock, LogOut, User as UserIcon
 } from "lucide-react";
 import { analyzeFridgeImage, type AnalysisResponse, type Recipe } from "./lib/gemini";
-import { auth, db } from "./firebase";
-import { onAuthStateChanged, signOut } from "firebase/auth";
-import { 
-  doc, 
-  setDoc, 
-  getDoc,
-  collection, 
-  onSnapshot, 
-  query, 
-  orderBy, 
-  serverTimestamp,
-  deleteDoc,
-  addDoc
-} from "firebase/firestore";
-
 import { AuthScreen } from "./components/AuthScreen";
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [authStatus, setAuthStatus] = useState<"loading" | "unauthenticated" | "authenticated">("loading");
-  const [token, setToken] = useState<string | null>(localStorage.getItem("auth_token"));
   const [image, setImage] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResponse | null>(null);
@@ -41,42 +25,61 @@ export default function App() {
   const [userRating, setUserRating] = useState(0);
   const [feedback, setFeedback] = useState("");
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
+  const [showPermissionHelp, setShowPermissionHelp] = useState(false);
 
-  // Load favorites and check auth on mount
+  // Authentication handlers
+  const handleAuthSuccess = (userData: any, token: string) => {
+    setUser(userData);
+    localStorage.setItem("auth_token", token);
+    setAuthStatus("authenticated");
+    if (userData.favorites) {
+      setFavorites(userData.favorites);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+      localStorage.removeItem("auth_token");
+      setUser(null);
+      setAuthStatus("unauthenticated");
+      setResult(null);
+      setImage(null);
+      setView("home");
+    } catch (e) {
+      console.error("Logout failed", e);
+    }
+  };
+
+  // Load preferences and user on mount
   useEffect(() => {
-    // Firebase Auth Listener
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        try {
-          // Fetch user profile from Firestore
-          const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
-          if (userDoc.exists()) {
-            setUser(userDoc.data());
-          } else {
-            // Fallback for new users or if sync hasn't happened yet
-            setUser({
-              uid: firebaseUser.uid,
-              name: firebaseUser.displayName || "Chef",
-              email: firebaseUser.email,
-              photoURL: firebaseUser.photoURL,
-              provider: firebaseUser.providerData[0]?.providerId
-            });
-          }
-          const token = await firebaseUser.getIdToken();
-          setToken(token);
-          localStorage.setItem("auth_token", token);
+    const checkUser = async () => {
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        setAuthStatus("unauthenticated");
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/auth/me", {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setUser(data.user);
           setAuthStatus("authenticated");
-        } catch (err) {
-          console.error("Profile fetch error", err);
+          if (data.user.favorites) {
+            setFavorites(data.user.favorites);
+          }
+        } else {
+          localStorage.removeItem("auth_token");
           setAuthStatus("unauthenticated");
         }
-      } else {
-        setUser(null);
-        setToken(null);
-        localStorage.removeItem("auth_token");
+      } catch (err) {
         setAuthStatus("unauthenticated");
       }
-    });
+    };
+    checkUser();
 
     const saved = localStorage.getItem("cookgenix_favorites");
     if (saved) {
@@ -91,29 +94,39 @@ export default function App() {
     if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
       setIsDarkMode(true);
     }
-
-    return () => unsubscribe();
+    
+    const savedDarkMode = localStorage.getItem("darkMode");
+    if (savedDarkMode !== null) {
+      setIsDarkMode(savedDarkMode === "true");
+      if (savedDarkMode === "true") {
+        document.documentElement.classList.add("dark");
+      }
+    }
   }, []);
 
-  const handleAuthSuccess = async (userData: any, userToken: string) => {
-    // This is now handled by the observer, but we set local state for immediate feedback
-    setUser(userData);
-    setToken(userToken);
-    setAuthStatus("authenticated");
-  };
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (e) {
-      console.error("Logout error", e);
-    }
-  };
-
-  // Save favorites to local storage whenever they change
+  // Sync favorites to backend
   useEffect(() => {
+    const syncFavorites = async () => {
+      if (authStatus !== "authenticated") return;
+      
+      const token = localStorage.getItem("auth_token");
+      try {
+        await fetch("/api/favorites", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({ favorites })
+        });
+      } catch (err) {
+        console.error("Failed to sync favorites with server", err);
+      }
+    };
+
     localStorage.setItem("cookgenix_favorites", JSON.stringify(favorites));
-  }, [favorites]);
+    syncFavorites();
+  }, [favorites, authStatus]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -278,12 +291,34 @@ export default function App() {
     }
   };
 
-  const submitRating = () => {
+  const submitRating = async () => {
     if (userRating === 0) return;
-    alert("Dhanyawaad! Your feedback means a lot to us. (Demo Version: No data was sent)");
-    setShowRatingModal(false);
-    setUserRating(0);
-    setFeedback("");
+    setRatingSubmitting(true);
+    
+    const token = localStorage.getItem("auth_token");
+    try {
+      await fetch("/api/feedback", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ 
+          rating: userRating, 
+          message: feedback 
+        })
+      });
+      
+      alert("Dhanyawaad! Your feedback has been saved to our database.");
+      setShowRatingModal(false);
+      setUserRating(0);
+      setFeedback("");
+    } catch (err) {
+      console.error("Failed to save feedback", err);
+      alert("Arre! Something went wrong while saving your feedback.");
+    } finally {
+      setRatingSubmitting(false);
+    }
   };
 
   const handleReset = () => {
@@ -293,7 +328,6 @@ export default function App() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const [showPermissionHelp, setShowPermissionHelp] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState<PermissionState | 'unknown'>('unknown');
 
   // Check camera permission status
@@ -311,13 +345,13 @@ export default function App() {
 
   if (authStatus === 'loading') {
     return (
-      <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-bg-dark' : 'bg-bg-light'}`}>
+      <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-bg-dark text-white' : 'bg-bg-light text-gray-900'}`}>
         <motion.div 
-          animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
-          transition={{ repeat: Infinity, duration: 1.5 }}
-          className="flex flex-col items-center gap-4 text-primary"
+          animate={{ scale: [1, 1.1, 1], opacity: [0.5, 1, 0.5] }}
+          transition={{ duration: 2, repeat: Infinity }}
+          className="flex flex-col items-center gap-4"
         >
-          <ChefHat size={60} />
+          <ChefHat size={60} className="text-primary animate-bounce" />
           <p className="font-black uppercase tracking-[0.2em] text-xs">Preparing Workspace</p>
         </motion.div>
       </div>
