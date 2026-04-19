@@ -39,7 +39,7 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await fetch(`${window.location.origin}/api/auth/logout`, { method: "POST" });
       localStorage.removeItem("auth_token");
       setUser(null);
       setAuthStatus("unauthenticated");
@@ -61,7 +61,7 @@ export default function App() {
       }
 
       try {
-        const response = await fetch("/api/auth/me", {
+        const response = await fetch(`${window.location.origin}/api/auth/me`, {
           headers: { "Authorization": `Bearer ${token}` }
         });
         
@@ -122,7 +122,7 @@ export default function App() {
       
       const token = localStorage.getItem("auth_token");
       try {
-        await fetch("/api/favorites", {
+        await fetch(`${window.location.origin}/api/favorites`, {
           method: "POST",
           headers: { 
             "Content-Type": "application/json",
@@ -308,7 +308,7 @@ export default function App() {
     
     const token = localStorage.getItem("auth_token");
     try {
-      await fetch("/api/feedback", {
+      await fetch(`${window.location.origin}/api/feedback`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",

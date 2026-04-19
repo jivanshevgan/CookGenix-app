@@ -20,7 +20,8 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
     setIsLoading(true);
     setError(null);
 
-    const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/signup";
+    const API_BASE = window.location.origin;
+    const endpoint = mode === "login" ? `${API_BASE}/api/auth/login` : `${API_BASE}/api/auth/signup`;
     const body = mode === "login" ? { email, password } : { name, email, password };
 
     try {
@@ -37,7 +38,8 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
         data = JSON.parse(text);
       } catch (parseErr) {
         console.error("Raw response:", text);
-        throw new Error(`Server error (${response.status}): The server returned an invalid response.`);
+        const snippet = text.substring(0, 50).replace(/[<>]/g, "");
+        throw new Error(`Response Error (${response.status}): Received invalid data. Snippet: [${snippet}]`);
       }
 
       if (!response.ok) {

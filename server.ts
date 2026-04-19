@@ -8,6 +8,8 @@ import jwt from "jsonwebtoken";
 import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 
+import cors from "cors";
+
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,8 +31,16 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  app.use(cors({ origin: true, credentials: true })); // Enable CORS
   app.use(express.json());
   app.use(cookieParser());
+
+  // Debug Logging Middleware
+  app.all("/api/*", (req, res, next) => {
+    const logEntry = `[${new Date().toISOString()}] ${req.method} ${req.url} - IP: ${req.ip}\n`;
+    fs.appendFileSync(path.join(__dirname, "server_logs.txt"), logEntry);
+    next();
+  });
 
   const getUsers = () => {
     try {
@@ -212,6 +222,11 @@ async function startServer() {
     } catch (e) {
       res.status(401).json({ error: "Invalid session" });
     }
+  });
+
+  // API 404 Fallback
+  app.all("/api/*", (req, res) => {
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
   });
 
   // Health
