@@ -77,5 +77,17 @@ export async function analyzeFridgeImage(base64Image: string, mimeType: string):
     }
   });
 
-  return JSON.parse(response.text || "{}");
+  // MOBILE FIX: Safe parsing
+  const responseText = response.text?.trim();
+
+  if (!responseText) {
+    throw new Error("Empty response from AI server");
+  }
+
+  try {
+    return JSON.parse(responseText);
+  } catch (error) {
+    console.error("Response text:", responseText.substring(0, 200));
+    throw new Error("Invalid response format from AI server");
+  }
 }
