@@ -7,17 +7,6 @@ import {
   Plus, LogOut, User as UserIcon, Star, Clock
 } from "lucide-react";
 import { analyzeFridgeImage, type AnalysisResponse, type Recipe } from "./lib/gemini";
-import { auth, db, googleProvider } from "./firebase";
-import { 
-  signInWithPopup, 
-  signInWithRedirect,
-  getRedirectResult,
-  onAuthStateChanged, 
-  signOut, 
-  type User,
-  signInWithPhoneNumber,
-  type ConfirmationResult
-} from "firebase/auth";
 import { 
   doc, 
   setDoc, 
@@ -29,11 +18,13 @@ import {
   deleteDoc,
   addDoc
 } from "firebase/firestore";
-import { RecaptchaVerifier } from "./firebase";
+
+import { AuthScreen } from "./components/AuthScreen";
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<any>(null);
+  const [authStatus, setAuthStatus] = useState<"loading" | "unauthenticated" | "authenticated">("loading");
+  const [token, setToken] = useState<string | null>(localStorage.getItem("auth_token"));
   const [image, setImage] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResponse | null>(null);
@@ -43,220 +34,88 @@ export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [favorites, setFavorites] = useState<Recipe[]>([]);
   const [view, setView] = useState<"home" | "collection">("home");
-  const [isAuthReady, setIsAuthReady] = useState(false);
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [userRating, setUserRating] = useState(0);
   const [feedback, setFeedback] = useState("");
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
 
-  // Persistence fix for iframe sessions
+  // Load favorites and check auth on mount
   useEffect(() => {
-    // Add recaptcha container to body directly if it doesn't exist
-    if (!document.getElementById('recaptcha-container')) {
-      const container = document.createElement('div');
-      container.id = 'recaptcha-container';
-      document.body.appendChild(container);
+    const checkAuth = async () => {
+      const savedToken = localStorage.getItem("auth_token");
+      if (!savedToken) {
+        setAuthStatus("unauthenticated");
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/auth/me", {
+          headers: { "Authorization": `Bearer ${savedToken}` }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setUser(data.user);
+          setAuthStatus("authenticated");
+        } else {
+          localStorage.removeItem("auth_token");
+          setAuthStatus("unauthenticated");
+        }
+      } catch (err) {
+        console.error("Auth check failed", err);
+        setAuthStatus("unauthenticated");
+      }
+    };
+
+    checkAuth();
+
+    const saved = localStorage.getItem("cookgenix_favorites");
+    if (saved) {
+      try {
+        setFavorites(JSON.parse(saved));
+      } catch (e) {
+        console.error("Failed to load favorites", e);
+      }
+    }
+    
+    // Check dark mode preference
+    if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      setIsDarkMode(true);
     }
   }, []);
+
+  const handleAuthSuccess = (userData: any, userToken: string) => {
+    setUser(userData);
+    setToken(userToken);
+    localStorage.setItem("auth_token", userToken);
+    setAuthStatus("authenticated");
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch (e) {}
+    setUser(null);
+    setToken(null);
+    localStorage.removeItem("auth_token");
+    setAuthStatus("unauthenticated");
+  };
+
+  // Save favorites to local storage whenever they change
+  useEffect(() => {
+    localStorage.setItem("cookgenix_favorites", JSON.stringify(favorites));
+  }, [favorites]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Auth Listener
-  useEffect(() => {
-    // 1. Check for Redirect Result (Crucial for Mobile Login)
-    getRedirectResult(auth).catch((err) => {
-      console.error("Redirect Login Error:", err);
-      if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
-        setError("Login failed. Mobile browser blocked the verification. Try using Full Mode.");
-      }
-    });
-
-    // 2. Auth State Listener
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      setLoading(false);
-      if (u) {
-        // Update user profile in Firestore
-        const userRef = doc(db, "users", u.uid);
-        const loginType = u.providerData[0]?.providerId === "google.com" ? "google" : (u.phoneNumber ? "phone" : "password");
-        await setDoc(userRef, {
-          uid: u.uid,
-          name: u.displayName || "CookGenix User",
-          email: u.email,
-          photoURL: u.photoURL,
-          phoneNumber: u.phoneNumber,
-          loginType: loginType,
-          lastLogin: serverTimestamp(),
-          createdAt: serverTimestamp() // setDoc with merge will handle this if it exists
-        }, { merge: true });
-      }
-    });
-    return unsubscribe;
-  }, []);
-
-  // Sync favorites with Firestore
-  useEffect(() => {
-    if (!user) {
-      setFavorites([]);
-      return;
-    }
-
-    const q = query(collection(db, "users", user.uid, "favorites"), orderBy("savedAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const favs = snapshot.docs.map(doc => ({ ...doc.data() } as Recipe));
-      setFavorites(favs);
-      setIsAuthReady(true);
-    });
-
-    return unsubscribe;
-  }, [user]);
-
-  const toggleFavorite = async (recipe: Recipe) => {
-    if (!user) return;
-    
-    const recipeId = btoa(recipe.name).replace(/[^a-zA-Z0-9]/g, ""); // simple unique ID
-    const favRef = doc(db, "users", user.uid, "favorites", recipeId);
-    
+  const toggleFavorite = (recipe: Recipe) => {
     const isFav = favorites.some(fav => fav.name.trim().toLowerCase() === recipe.name.trim().toLowerCase());
     
     if (isFav) {
-      await deleteDoc(favRef);
+      setFavorites(favorites.filter(fav => fav.name.trim().toLowerCase() !== recipe.name.trim().toLowerCase()));
     } else {
-      await setDoc(favRef, {
-        ...recipe,
-        id: recipeId,
-        savedAt: serverTimestamp()
-      });
-    }
-  };
-
-  const handleLogin = async () => {
-    try {
-      setError(null);
-      const isMob = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      const isInIframe = window !== window.parent;
-
-      if (isMob && !isInIframe) {
-        // Mobile browser - Popups are usually blocked, so use redirect
-        await signInWithRedirect(auth, googleProvider);
-      } else {
-        // Desktop or Iframe - Popups are generally preferred or caught by the "Full Mode" handler
-        await signInWithPopup(auth, googleProvider);
-      }
-    } catch (err: any) {
-      // Ignore if user just closed the popup
-      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
-        return;
-      }
-      console.error("Login failed", err);
-      setError("Google Login failed. Please try again.");
-    }
-  };
-
-  const setupRecaptcha = (containerId: string, size: 'invisible' | 'normal' = 'normal') => {
-    // 1. Clean up existing
-    if ((window as any).recaptchaVerifier) {
-      try {
-        (window as any).recaptchaVerifier.clear();
-        (window as any).recaptchaVerifier = null;
-      } catch (e) {}
-    }
-    
-    const container = document.getElementById(containerId);
-    if (!container) return null;
-    container.innerHTML = "";
-    
-    try {
-      const verifier = new RecaptchaVerifier(auth, containerId, {
-        'size': size,
-        'callback': (response: any) => {
-          console.log("reCAPTCHA solved");
-        },
-        'expired-callback': () => {
-          alert("reCAPTCHA expired. Please refresh.");
-        }
-      });
-      
-      (window as any).recaptchaVerifier = verifier;
-      return verifier;
-    } catch (err) {
-      console.error("reCAPTCHA Init Error:", err);
-      return null;
-    }
-  };
-
-  const handlePhoneLogin = async (phoneNumber: string) => {
-    try {
-      setError(null);
-      // Ensure number is trimmed and has + prefix
-      let num = phoneNumber.trim().replace(/\s/g, '');
-      
-      // Auto-format for India if needed
-      if (num.startsWith('0')) num = num.substring(1);
-      if (!num.startsWith('+')) {
-        num = num.length === 10 ? '+91' + num : '+' + num;
-      }
-      
-      const verifier = setupRecaptcha('recaptcha-container');
-      const confirmation = await signInWithPhoneNumber(auth, num, verifier);
-      return confirmation;
-    } catch (err: any) {
-      console.error("Phone login initiation failed", err);
-      
-      if (err.code === 'auth/unauthorized-domain') {
-        const currentDomain = window.location.hostname;
-        alert(`SIGN-IN BLOCKED: Domain "${currentDomain}" is not authorized.\n\nPLEASE FIX THIS:\n1. Open Firebase Console\n2. Go to Authentication -> Settings -> Authorized Domains\n3. Add "${currentDomain}" to the list.`);
-      } else if (err.code === 'auth/invalid-phone-number') {
-        alert("Invalid phone number. Please include the country code (e.g., +91).");
-      } else if (err.code === 'auth/too-many-requests') {
-        alert("Too many attempts. This device/number has been temporarily blocked for security. Please try again later.");
-      } else {
-        alert(`Login Error: ${err.message}`);
-      }
-      
-      // If recaptcha fails, clear it so it can be re-initialized
-      try {
-        if ((window as any).recaptchaVerifier) {
-          (window as any).recaptchaVerifier.clear();
-          (window as any).recaptchaVerifier = null;
-        }
-      } catch (e) {}
-      throw err;
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      setView("home");
-    } catch (err) {
-      console.error("Logout failed", err);
-    }
-  };
-
-  const submitRating = async () => {
-    if (!user || userRating === 0) return;
-    setRatingSubmitting(true);
-    try {
-      await addDoc(collection(db, "ratings"), {
-        uid: user.uid,
-        userName: user.displayName || "CookGenix User",
-        email: user.email || null,
-        phoneNumber: user.phoneNumber || null,
-        rating: userRating,
-        feedback: feedback,
-        timestamp: serverTimestamp()
-      });
-      setShowRatingModal(false);
-      setUserRating(0);
-      setFeedback("");
-      alert("Dhanyawaad! Your feedback means a lot to us.");
-    } catch (err) {
-      console.error("Rating failed", err);
-    } finally {
-      setRatingSubmitting(false);
+      setFavorites([...favorites, { ...recipe, savedAt: new Date().toISOString() }]);
     }
   };
 
@@ -409,6 +268,14 @@ export default function App() {
     }
   };
 
+  const submitRating = () => {
+    if (userRating === 0) return;
+    alert("Dhanyawaad! Your feedback means a lot to us. (Demo Version: No data was sent)");
+    setShowRatingModal(false);
+    setUserRating(0);
+    setFeedback("");
+  };
+
   const handleReset = () => {
     setImage(null);
     setResult(null);
@@ -431,18 +298,24 @@ export default function App() {
     }
   }, []);
 
-  if (loading) {
+
+  if (authStatus === 'loading') {
     return (
-      <div className="min-h-screen bg-bg-light dark:bg-bg-dark flex items-center justify-center">
-        <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
-          <ChefHat size={48} className="text-primary" />
+      <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-bg-dark' : 'bg-bg-light'}`}>
+        <motion.div 
+          animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
+          transition={{ repeat: Infinity, duration: 1.5 }}
+          className="flex flex-col items-center gap-4 text-primary"
+        >
+          <ChefHat size={60} />
+          <p className="font-black uppercase tracking-[0.2em] text-xs">Preparing Workspace</p>
         </motion.div>
       </div>
     );
   }
 
-  if (!user) {
-    return <LoginScreen onLogin={handleLogin} onPhoneLogin={handlePhoneLogin} setupRecaptcha={setupRecaptcha} isDarkMode={isDarkMode} toggleDarkMode={toggleDarkMode} />;
+  if (authStatus === 'unauthenticated') {
+    return <AuthScreen isDarkMode={isDarkMode} onAuthSuccess={handleAuthSuccess} />;
   }
 
   return (
@@ -582,24 +455,11 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-3">
-          {user && (
-            <div className="flex items-center gap-3 mr-2 p-1 pl-3 bg-black/5 dark:bg-white/5 rounded-2xl">
-              <span className="text-xs font-bold hidden sm:block">{user.displayName?.split(' ')[0]}</span>
-              {user.photoURL ? (
-                <img src={user.photoURL} alt={user.displayName || ""} className="w-8 h-8 rounded-xl object-cover" referrerPolicy="no-referrer" />
-              ) : (
-                <div className="w-8 h-8 rounded-xl bg-primary/20 flex items-center justify-center text-primary"><UserIcon size={16} /></div>
-              )}
-              <button 
-                onClick={handleLogout}
-                className="p-2 text-gray-400 hover:text-red-500 transition-colors"
-                title="Logout"
-              >
-                <LogOut size={18} />
-              </button>
-            </div>
-          )}
-          
+          <div className={`hidden md:flex flex-col items-end mr-2 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+            <span className="text-[10px] font-black uppercase tracking-widest opacity-40">Logged in as</span>
+            <span className="text-xs font-bold">{user?.name}</span>
+          </div>
+
           <button 
             onClick={() => setView(view === 'home' ? 'collection' : 'home')}
             className={`p-2 rounded-xl transition-colors ${isDarkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10'}`}
@@ -613,6 +473,14 @@ export default function App() {
             className={`p-2 rounded-xl transition-colors ${isDarkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10'}`}
           >
             {isDarkMode ? <Sun size={20} className="text-primary" /> : <Moon size={20} className="text-gray-600" />}
+          </button>
+
+          <button 
+            onClick={handleLogout}
+            className={`p-2 rounded-xl transition-colors text-red-500 ${isDarkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10'}`}
+            title="Logout"
+          >
+            <LogOut size={20} />
           </button>
         </div>
       </nav>
@@ -1110,219 +978,6 @@ function PlusButton({ onClick }: any) {
   );
 }
 
-function LoginScreen({ onLogin, onPhoneLogin, setupRecaptcha, isDarkMode, toggleDarkMode }: any) {
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [otp, setOtp] = useState("");
-  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
-  const [step, setStep] = useState<"phone" | "otp">("phone");
-  const [loading, setLoading] = useState(false);
-  const [isInIframe, setIsInIframe] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-  const [debugLog, setDebugLog] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Precise detection of environment
-    const isIframe = window !== window.parent || document.referrer.includes('run.app');
-    const isMob = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    setIsInIframe(isIframe);
-    setIsMobile(isMob);
-  }, []);
-
-  const openInFullMode = () => {
-    const url = window.location.href;
-    const newTab = window.open(url, '_blank');
-    if (!newTab) {
-      window.top!.location.href = url;
-    }
-  };
-
-  const initiatePhoneLogin = async () => {
-    if (!phoneNumber) return;
-    setDebugLog(null);
-    setLoading(true);
-    
-    try {
-      // 1. Setup the verifier VISIBLY
-      const verifier = (window as any).recaptchaVerifier || setupRecaptcha('recaptcha-container', 'normal');
-      if (!verifier) {
-        throw new Error("Unable to load security verification box.");
-      }
-
-      // 2. Clear any old error
-      setDebugLog("Verification starting...");
-      
-      const confirmation = await onPhoneLogin(phoneNumber);
-      setConfirmationResult(confirmation);
-      setStep("otp");
-      setDebugLog("OTP Sent successfully!");
-    } catch (err: any) {
-      console.error("Login Step 1 Error:", err);
-      setDebugLog(`${err.code || 'ERROR'}: ${err.message}`);
-      
-      if (err.code === 'auth/unauthorized-domain') {
-        alert("CRITICAL ERROR: This domain is not authorized in Firebase Console.");
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const verifyOtp = async () => {
-    if (!otp || !confirmationResult) return;
-    setDebugLog(null);
-    setLoading(true);
-    try {
-      await confirmationResult.confirm(otp);
-      setDebugLog("Logged in successfully!");
-    } catch (err: any) {
-      setDebugLog(err.message);
-      alert("Invalid OTP code. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className={`min-h-screen flex items-center justify-center p-6 ${isDarkMode ? 'bg-bg-dark text-white' : 'bg-bg-light text-gray-900'}`}>
-      <div className="max-w-md w-full space-y-12">
-        <div className="text-center space-y-6">
-          <motion.div 
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            className="w-20 h-20 bg-primary rounded-3xl mx-auto flex items-center justify-center shadow-2xl shadow-primary/20"
-          >
-            <ChefHat size={40} className="text-white" />
-          </motion.div>
-          <div className="space-y-2">
-            <h1 className="text-4xl font-black italic tracking-tight">Cook<span className="text-primary">Genix</span></h1>
-            <p className="text-gray-500 font-medium whitespace-pre-line">
-              {step === "phone" ? "Mobile Login Verification" : `OTP sent to ${phoneNumber}`}
-            </p>
-          </div>
-        </div>
-
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="relative glass p-8 rounded-[40px] shadow-2xl border-2 border-white/10 overflow-hidden"
-        >
-          <div className="space-y-6">
-            {step === "phone" ? (
-              <>
-                <div className="space-y-4">
-                  <button 
-                    onClick={onLogin}
-                    className="w-full flex items-center justify-center gap-4 py-4 px-6 bg-white text-gray-900 rounded-2xl font-black shadow-lg hover:scale-[1.02] transition-transform border border-gray-100"
-                  >
-                    <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
-                    Sign in with Google
-                  </button>
-                  
-                  {isInIframe && (
-                    <button 
-                      onClick={openInFullMode}
-                      className="w-full py-2 text-[10px] font-black uppercase tracking-widest text-primary hover:underline flex items-center justify-center gap-2"
-                    >
-                      <Share2 size={12} /> Troubleshoot: Open in Full Screen Mode
-                    </button>
-                  )}
-                </div>
-
-                <div className="relative py-2">
-                  <div className="absolute inset-0 flex items-center"><div className="w-full h-px bg-black/5 dark:bg-white/10"></div></div>
-                  <div className="relative flex justify-center text-[10px] font-black uppercase tracking-widest text-gray-400"><span className="px-4 bg-white dark:bg-bg-dark rounded-full">Or Phone Number</span></div>
-                </div>
-                
-                <div className="space-y-4 text-center">
-                  <div className="space-y-2 text-left">
-                    <label className="text-xs font-black uppercase tracking-widest opacity-50 ml-2">Mobile (with +91)</label>
-                    <input 
-                      type="tel" 
-                      placeholder="+91 00000 00000"
-                      value={phoneNumber}
-                      onChange={(e) => setPhoneNumber(e.target.value)}
-                      className="w-full p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary transition-colors outline-none font-bold"
-                    />
-                  </div>
-
-                  {/* VISIBLE RECAPTCHA AREA */}
-                  <div id="recaptcha-container" className="flex justify-center my-4 overflow-hidden rounded-xl border-2 border-primary/10 p-2 bg-white/5"></div>
-
-                  <button 
-                    onClick={initiatePhoneLogin}
-                    disabled={loading || !phoneNumber}
-                    className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg disabled:opacity-50 transition-all flex items-center justify-center gap-2 active:scale-95"
-                  >
-                    {loading ? (
-                      <RefreshCcw size={20} className="animate-spin" />
-                    ) : (
-                      "Send OTP Code"
-                    )}
-                  </button>
-                </div>
-
-                {debugLog && (
-                  <div className="p-4 bg-black/5 dark:bg-white/5 rounded-2xl text-[10px] font-mono text-primary overflow-auto max-h-24">
-                    <p className="font-black mb-1 opacity-50 uppercase tracking-widest">Diagnostic Info:</p>
-                    {debugLog}
-                  </div>
-                )}
-
-                <div className={`p-4 rounded-2xl text-[10px] font-medium leading-relaxed ${isDarkMode ? 'bg-white/5 text-gray-400' : 'bg-black/5 text-gray-500'}`}>
-                  <p className="font-black uppercase tracking-widest text-primary mb-2 flex items-center gap-2">
-                    <Info size={12} /> If OTP is not received:
-                  </p>
-                  <ul className="list-disc pl-4 space-y-1">
-                    <li>Check if reCAPTCHA box above is solved</li>
-                    <li>Ensure you added <strong>+91</strong> (India)</li>
-                    <li><strong>Google Issue?</strong> Tap "Full Screen Mode" above to bypass browser security</li>
-                  </ul>
-                </div>
-              </>
-            ) : (
-              <div className="space-y-4">
-                <p className="text-center text-xs font-bold opacity-50">Enter the code sent to your mobile</p>
-                <input 
-                  type="text" 
-                  placeholder="6-digit OTP"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
-                  maxLength={6}
-                  className="w-full p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary transition-colors outline-none font-bold text-center text-2xl tracking-[0.5em]"
-                />
-                <button 
-                  onClick={verifyOtp}
-                  disabled={loading || otp.length < 6}
-                  className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg disabled:opacity-50 transition-all active:scale-95"
-                >
-                  {loading ? "Verifying..." : "Verify & Login"}
-                </button>
-                <button 
-                  onClick={() => setStep("phone")}
-                  className="w-full py-2 text-primary font-bold text-xs uppercase"
-                >
-                  Edit Number
-                </button>
-
-                {debugLog && (
-                   <div className="p-4 bg-black/5 dark:bg-white/5 rounded-2xl text-[10px] font-mono text-primary">
-                     {debugLog}
-                   </div>
-                )}
-              </div>
-            )}
-          </div>
-        </motion.div>
-
-        <div className="text-center">
-          <button onClick={toggleDarkMode} className="text-xs font-black uppercase tracking-widest opacity-40 hover:opacity-100 transition-opacity flex items-center gap-2 mx-auto">
-            {isDarkMode ? <Sun size={14} /> : <Moon size={14} />} Switch Appearance
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function RatingSection({ isDarkMode, userRating, setUserRating, feedback, setFeedback, onSubmit, submitting }: any) {
   return (
