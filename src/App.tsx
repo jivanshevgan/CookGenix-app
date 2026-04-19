@@ -10,6 +10,8 @@ import { analyzeFridgeImage, type AnalysisResponse, type Recipe } from "./lib/ge
 import { auth, db, googleProvider } from "./firebase";
 import { 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   onAuthStateChanged, 
   signOut, 
   type User,
@@ -63,6 +65,15 @@ export default function App() {
 
   // Auth Listener
   useEffect(() => {
+    // 1. Check for Redirect Result (Crucial for Mobile Login)
+    getRedirectResult(auth).catch((err) => {
+      console.error("Redirect Login Error:", err);
+      if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
+        setError("Login failed. Mobile browser blocked the verification. Try using Full Mode.");
+      }
+    });
+
+    // 2. Auth State Listener
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       setLoading(false);
@@ -124,7 +135,16 @@ export default function App() {
   const handleLogin = async () => {
     try {
       setError(null);
-      await signInWithPopup(auth, googleProvider);
+      const isMob = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      const isInIframe = window !== window.parent;
+
+      if (isMob && !isInIframe) {
+        // Mobile browser - Popups are usually blocked, so use redirect
+        await signInWithRedirect(auth, googleProvider);
+      } else {
+        // Desktop or Iframe - Popups are generally preferred or caught by the "Full Mode" handler
+        await signInWithPopup(auth, googleProvider);
+      }
     } catch (err: any) {
       // Ignore if user just closed the popup
       if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
@@ -1255,7 +1275,7 @@ function LoginScreen({ onLogin, onPhoneLogin, setupRecaptcha, isDarkMode, toggle
                   <ul className="list-disc pl-4 space-y-1">
                     <li>Check if reCAPTCHA box above is solved</li>
                     <li>Ensure you added <strong>+91</strong> (India)</li>
-                    <li>If on Mobile, use the <strong>Full Screen Mode</strong> button above</li>
+                    <li><strong>Google Issue?</strong> Tap "Full Screen Mode" above to bypass browser security</li>
                   </ul>
                 </div>
               </>
