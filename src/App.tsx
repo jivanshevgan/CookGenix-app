@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { analyzeFridgeImage, type AnalysisResponse, type Recipe } from "./lib/gemini";
 import { AuthScreen } from "./components/AuthScreen";
+import { auth } from "./lib/firebase";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
@@ -28,19 +30,14 @@ export default function App() {
   const [showPermissionHelp, setShowPermissionHelp] = useState(false);
 
   // Authentication handlers
-  const handleAuthSuccess = (userData: any, token: string) => {
+  const handleAuthSuccess = (userData: any) => {
     setUser(userData);
-    localStorage.setItem("auth_token", token);
     setAuthStatus("authenticated");
-    if (userData.favorites) {
-      setFavorites(userData.favorites);
-    }
   };
 
   const handleLogout = async () => {
     try {
-      await fetch(`${window.location.origin}/api/auth/logout`, { method: "POST" });
-      localStorage.removeItem("auth_token");
+      await signOut(auth);
       setUser(null);
       setAuthStatus("unauthenticated");
       setResult(null);
@@ -51,46 +48,35 @@ export default function App() {
     }
   };
 
-  // Load preferences and user on mount
+  // Load preferences and session on mount
   useEffect(() => {
-    const checkUser = async () => {
-      const token = localStorage.getItem("auth_token");
-      if (!token) {
-        setAuthStatus("unauthenticated");
-        return;
-      }
-
-      try {
-        const response = await fetch(`${window.location.origin}/api/auth/me`, {
-          headers: { "Authorization": `Bearer ${token}` }
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        setUser({
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+          name: firebaseUser.displayName || firebaseUser.email
         });
-        
-        const text = await response.text();
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch (parseErr) {
-          console.error("Auto-login check failed to parse response", text);
-          localStorage.removeItem("auth_token");
-          setAuthStatus("unauthenticated");
-          return;
-        }
+        setAuthStatus("authenticated");
 
-        if (response.ok) {
-          setUser(data.user);
-          setAuthStatus("authenticated");
-          if (data.user.favorites) {
-            setFavorites(data.user.favorites);
+        // Fetch favorites from backend (session verified via Firebase Token in headers)
+        try {
+          const token = await firebaseUser.getIdToken();
+          const response = await fetch(`${window.location.origin}/api/favorites`, {
+            headers: { "Authorization": `Bearer ${token}` }
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data.favorites) setFavorites(data.favorites);
           }
-        } else {
-          localStorage.removeItem("auth_token");
-          setAuthStatus("unauthenticated");
+        } catch (err) {
+          console.error("Failed to fetch favorites", err);
         }
-      } catch (err) {
+      } else {
+        setUser(null);
         setAuthStatus("unauthenticated");
       }
-    };
-    checkUser();
+    });
 
     const saved = localStorage.getItem("cookgenix_favorites");
     if (saved) {
@@ -113,15 +99,17 @@ export default function App() {
         document.documentElement.classList.add("dark");
       }
     }
+
+    return () => unsubscribe();
   }, []);
 
   // Sync favorites to backend
   useEffect(() => {
     const syncFavorites = async () => {
-      if (authStatus !== "authenticated") return;
+      if (authStatus !== "authenticated" || !auth.currentUser) return;
       
-      const token = localStorage.getItem("auth_token");
       try {
+        const token = await auth.currentUser.getIdToken();
         await fetch(`${window.location.origin}/api/favorites`, {
           method: "POST",
           headers: { 
@@ -303,11 +291,11 @@ export default function App() {
   };
 
   const submitRating = async () => {
-    if (userRating === 0) return;
+    if (userRating === 0 || !auth.currentUser) return;
     setRatingSubmitting(true);
     
-    const token = localStorage.getItem("auth_token");
     try {
+      const token = await auth.currentUser.getIdToken();
       await fetch(`${window.location.origin}/api/feedback`, {
         method: "POST",
         headers: { 

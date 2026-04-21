@@ -1,9 +1,15 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChefHat, Mail, Lock, User, ArrowRight, Loader2, Sparkles } from "lucide-react";
+import { auth } from "../lib/firebase";
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  updateProfile 
+} from "firebase/auth";
 
 interface AuthScreenProps {
-  onAuthSuccess: (user: any, token: string) => void;
+  onAuthSuccess: (user: any) => void;
   isDarkMode: boolean;
 }
 
@@ -20,39 +26,31 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
     setIsLoading(true);
     setError(null);
 
-    const API_BASE = window.location.origin;
-    const endpoint = mode === "login" ? `${API_BASE}/api/auth/login` : `${API_BASE}/api/auth/signup`;
-    const body = mode === "login" ? { email, password } : { name, email, password };
-
     try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      const text = await response.text();
-      let data;
-      
-      try {
-        data = JSON.parse(text);
-      } catch (parseErr) {
-        console.error("Raw response:", text);
-        const snippet = text.substring(0, 50).replace(/[<>]/g, "");
-        throw new Error(`Response Error (${response.status}): Received invalid data. Snippet: [${snippet}]`);
+      if (mode === "signup") {
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(userCredential.user, { displayName: name });
+        onAuthSuccess({
+          uid: userCredential.user.uid,
+          email: userCredential.user.email,
+          name: name
+        });
+      } else {
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        onAuthSuccess({
+          uid: userCredential.user.uid,
+          email: userCredential.user.email,
+          name: userCredential.user.displayName || userCredential.user.email
+        });
       }
-
-      if (!response.ok) {
-        if (response.status === 401 && mode === "login") {
-          throw new Error("Invalid email or password. Do you have an account? Try signing up first!");
-        }
-        throw new Error(data.error || `Server error (${response.status})`);
-      }
-
-      onAuthSuccess(data.user, data.token);
     } catch (err: any) {
       console.error("Auth error:", err);
-      setError(err.message);
+      let msg = err.message;
+      if (err.code === "auth/user-not-found") msg = "No account found with this email. Please sign up!";
+      if (err.code === "auth/wrong-password") msg = "Incorrect password. Please try again.";
+      if (err.code === "auth/email-already-in-use") msg = "This email is already registered.";
+      if (err.code === "auth/invalid-credential") msg = "Invalid email or password.";
+      setError(msg);
     } finally {
       setIsLoading(false);
     }

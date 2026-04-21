@@ -3,21 +3,26 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
-
 import cors from "cors";
+import admin from "firebase-admin";
+import firebaseConfig from "./firebase-applet-config.json";
 
 dotenv.config();
+
+// Initialize Firebase Admin
+if (!admin.apps.length) {
+  admin.initializeApp({
+    projectId: firebaseConfig.projectId,
+  });
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const USERS_FILE = path.join(__dirname, "users.json");
 const FEEDBACK_FILE = path.join(__dirname, "feedback.json");
-const JWT_SECRET = process.env.JWT_SECRET || "cookgenix-secret-key-2026";
 
 // Initialize files
 if (!fs.existsSync(USERS_FILE)) {
@@ -35,6 +40,21 @@ async function startServer() {
   app.use(express.json());
   app.use(cookieParser());
 
+  // Firebase Auth Middleware
+  const authenticate = async (req: any, res: any, next: any) => {
+    const token = req.headers.authorization?.split("Bearer ")[1];
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      const decodedToken = await admin.auth().verifyIdToken(token);
+      req.user = decodedToken;
+      next();
+    } catch (error) {
+      console.error("Firebase auth error:", error);
+      res.status(401).json({ error: "Invalid session" });
+    }
+  };
+
   // Debug Logging Middleware
   app.all("/api/*", (req, res, next) => {
     const logEntry = `[${new Date().toISOString()}] ${req.method} ${req.url} - IP: ${req.ip}\n`;
@@ -44,145 +64,61 @@ async function startServer() {
 
   const getUsers = () => {
     try {
+      if (!fs.existsSync(USERS_FILE)) return [];
       const data = fs.readFileSync(USERS_FILE, "utf-8");
-      return JSON.parse(data);
+      return JSON.parse(data || "[]");
     } catch (e) {
+      console.error("Error reading users:", e);
       return [];
     }
   };
 
   const saveUsers = (users: any[]) => {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+    try {
+      fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+    } catch (e) {
+      console.error("Error saving users:", e);
+    }
   };
 
-  // --- Auth Endpoints ---
-
-  app.post("/api/auth/signup", async (req: any, res: any) => {
-    try {
-      const { name, email, password } = req.body;
-
-      if (!name || !email || !password) {
-        return res.status(400).json({ error: "Please fill all fields" });
-      }
-
-      const users = getUsers();
-      if (users.find((u: any) => u.email === email)) {
-        return res.status(400).json({ error: "Email already in use" });
-      }
-
-      const hashedPassword = await bcrypt.hash(password, 10);
-      const newUser = {
-        uid: Math.random().toString(36).substring(2, 15),
-        name,
-        email,
-        password: hashedPassword,
-        createdAt: new Date().toISOString(),
-        favorites: []
-      };
-
-      users.push(newUser);
-      saveUsers(users);
-
-  const token = jwt.sign({ uid: newUser.uid, email: newUser.email }, JWT_SECRET, { expiresIn: "7d" });
-      res.cookie("auth_token", token, { 
-        httpOnly: true, 
-        secure: true, // Required for iframes/mobile
-        sameSite: "none", // Required for iframes/mobile
-        maxAge: 7 * 24 * 60 * 60 * 1000 
-      });
-
-      const { password: _, ...userWithoutPassword } = newUser;
-      return res.json({ user: userWithoutPassword, token });
-    } catch (error) {
-      console.error("Signup error:", error);
-      return res.status(500).json({ error: "An unexpected error occurred during signup" });
-    }
-  });
-
-  app.post("/api/auth/login", async (req: any, res: any) => {
-    try {
-      const { email, password } = req.body;
-
-      if (!email || !password) {
-        return res.status(400).json({ error: "Email and password are required" });
-      }
-
-      const users = getUsers();
-      const user = users.find((u: any) => u.email === email);
-
-      if (!user || !(await bcrypt.compare(password, user.password))) {
-        return res.status(401).json({ error: "Invalid email or password" });
-      }
-
-      const token = jwt.sign({ uid: user.uid, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
-      res.cookie("auth_token", token, { 
-        httpOnly: true, 
-        secure: true, 
-        sameSite: "none",
-        maxAge: 7 * 24 * 60 * 60 * 1000
-      });
-
-      const { password: _, ...userWithoutPassword } = user;
-      return res.json({ user: userWithoutPassword, token });
-    } catch (error) {
-      console.error("Login error:", error);
-      return res.status(500).json({ error: "An unexpected error occurred during login" });
-    }
-  });
-
+  // --- Auth Endpoints (Deprecated, now handled on client with Firebase) ---
   app.post("/api/auth/logout", (req, res) => {
-    res.clearCookie("auth_token");
     res.json({ success: true });
-  });
-
-  app.get("/api/auth/me", (req: any, res: any) => {
-    const token = req.cookies.auth_token || req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as any;
-      const users = getUsers();
-      const user = users.find((u: any) => u.uid === decoded.uid);
-      
-      if (!user) return res.status(404).json({ error: "User not found" });
-
-      const { password: _, ...userWithoutPassword } = user;
-      res.json({ user: userWithoutPassword });
-    } catch (e) {
-      res.status(401).json({ error: "Invalid session" });
-    }
   });
 
   // --- Data Persistence Endpoints ---
 
-  app.get("/api/favorites", (req: any, res: any) => {
-    const token = req.cookies.auth_token || req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
+  app.get("/api/favorites", authenticate, (req: any, res: any) => {
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      const uid = req.user.uid;
       const users = getUsers();
-      const user = users.find((u: any) => u.uid === decoded.uid);
+      const user = users.find((u: any) => u.uid === uid);
       
-      if (!user) return res.status(404).json({ error: "User not found" });
-
-      res.json({ favorites: user.favorites || [] });
+      res.json({ favorites: user?.favorites || [] });
     } catch (e) {
-      res.status(401).json({ error: "Invalid session" });
+      res.status(500).json({ error: "Failed to fetch favorites" });
     }
   });
 
-  app.post("/api/favorites", (req: any, res: any) => {
-    const token = req.cookies.auth_token || req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
+  app.post("/api/favorites", authenticate, (req: any, res: any) => {
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      const uid = req.user.uid;
       const { favorites } = req.body;
       const users = getUsers();
-      const userIndex = users.findIndex((u: any) => u.uid === decoded.uid);
+      let userIndex = users.findIndex((u: any) => u.uid === uid);
       
-      if (userIndex === -1) return res.status(404).json({ error: "User not found" });
+      if (userIndex === -1) {
+        // Create user profile in JSON if it doesn't exist
+        const newUser = {
+          uid,
+          email: req.user.email,
+          name: req.user.name || req.user.email,
+          favorites: [],
+          createdAt: new Date().toISOString()
+        };
+        users.push(newUser);
+        userIndex = users.length - 1;
+      }
 
       users[userIndex].favorites = favorites;
       users[userIndex].updatedAt = new Date().toISOString();
@@ -190,24 +126,19 @@ async function startServer() {
 
       res.json({ success: true });
     } catch (e) {
-      res.status(401).json({ error: "Invalid session" });
+      res.status(500).json({ error: "Failed to save favorites" });
     }
   });
 
-  app.post("/api/feedback", (req: any, res: any) => {
-    const token = req.cookies.auth_token || req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
+  app.post("/api/feedback", authenticate, (req: any, res: any) => {
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as any;
       const { rating, message } = req.body;
-      
       const rawFeedback = fs.readFileSync(FEEDBACK_FILE, "utf-8");
-      const feedbacks = JSON.parse(rawFeedback);
+      const feedbacks = JSON.parse(rawFeedback || "[]");
       
       feedbacks.push({
-        uid: decoded.uid,
-        email: decoded.email,
+        uid: req.user.uid,
+        email: req.user.email,
         rating,
         message,
         timestamp: new Date().toISOString()
@@ -216,7 +147,7 @@ async function startServer() {
       fs.writeFileSync(FEEDBACK_FILE, JSON.stringify(feedbacks, null, 2));
       res.json({ success: true });
     } catch (e) {
-      res.status(401).json({ error: "Invalid session" });
+      res.status(500).json({ error: "Failed to save feedback" });
     }
   });
 
