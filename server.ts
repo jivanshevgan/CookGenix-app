@@ -195,8 +195,23 @@ async function startServer() {
     }
   });
 
+  // Health
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok" });
+  });
+
+  // User Ping (Triggers check-in/tracking)
+  app.get("/api/auth/ping", authenticate, (req: any, res: any) => {
+    res.json({ success: true, user: req.user });
+  });
+
   // Export Users for Admin
-  app.get("/api/admin/export-users", (req, res) => {
+  app.get("/api/admin/export-users", authenticate, (req: any, res: any) => {
+    // Only allow specific admin email
+    if (req.user.email !== "jeevanshevgan13@gmail.com") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+    
     if (fs.existsSync(USERS_FILE)) {
       res.setHeader("Content-Type", "application/json");
       res.setHeader("Content-Disposition", "attachment; filename=users.json");
@@ -207,7 +222,12 @@ async function startServer() {
   });
 
   // Export Feedback for Admin
-  app.get("/api/admin/export-feedback", (req, res) => {
+  app.get("/api/admin/export-feedback", authenticate, (req: any, res: any) => {
+    // Only allow specific admin email
+    if (req.user.email !== "jeevanshevgan13@gmail.com") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     if (fs.existsSync(FEEDBACK_FILE)) {
       res.setHeader("Content-Type", "application/json");
       res.setHeader("Content-Disposition", "attachment; filename=feedback.json");
@@ -215,16 +235,6 @@ async function startServer() {
     } else {
       res.status(404).send("File not found");
     }
-  });
-
-  // API 404 Fallback
-  app.all("/api/*", (req, res) => {
-    res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
-  });
-
-  // Health
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
   });
 
   // Vite

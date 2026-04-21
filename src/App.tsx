@@ -91,9 +91,14 @@ export default function App() {
         });
         setAuthStatus("authenticated");
 
-        // Fetch favorites from backend (session verified via Firebase Token in headers)
+        // Fetch favorites from backend
         try {
           const token = await firebaseUser.getIdToken();
+          // First, "Ping" the server to ensure user is tracked/created
+          await fetch(`${window.location.origin}/api/auth/ping`, {
+            headers: { "Authorization": `Bearer ${token}` }
+          });
+
           const response = await fetch(`${window.location.origin}/api/favorites`, {
             headers: { "Authorization": `Bearer ${token}` }
           });
@@ -102,7 +107,7 @@ export default function App() {
             if (data.favorites) setFavorites(data.favorites);
           }
         } catch (err) {
-          console.error("Failed to fetch favorites", err);
+          console.error("Failed to sync session", err);
         }
       } else {
         setUser(null);
