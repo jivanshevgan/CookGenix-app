@@ -4,7 +4,7 @@ import {
   Camera, ChefHat, Sparkles, UtensilsCrossed, RefreshCcw, 
   CheckCircle2, ChevronRight, Info, X, Zap, RotateCcw, 
   Image as ImageIcon, Moon, Sun, Heart, Share2, Home, 
-  Plus, Star, Clock, LogOut, User as UserIcon
+  Plus, Star, Clock, LogOut, User as UserIcon, Bookmark, BookmarkCheck
 } from "lucide-react";
 import { analyzeFridgeImage, type AnalysisResponse, type Recipe } from "./lib/gemini";
 import { AuthScreen } from "./components/AuthScreen";
@@ -542,10 +542,15 @@ export default function App() {
 
           <button 
             onClick={() => setView(view === 'home' ? 'collection' : 'home')}
-            className={`p-2 rounded-xl transition-colors ${isDarkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10'}`}
+            className={`p-2 rounded-xl transition-colors relative ${isDarkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10'}`}
             title={view === 'home' ? 'My Collection' : 'Back to Home'}
           >
             {view === 'home' ? <Heart size={20} className="text-primary" /> : <Home size={20} className="text-gray-600 dark:text-gray-400" />}
+            {favorites.length > 0 && view === 'home' && (
+              <span className="absolute -top-1 -right-1 bg-primary text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center border-2 border-white dark:border-bg-dark">
+                {favorites.length}
+              </span>
+            )}
           </button>
 
           {isAdmin && (
@@ -986,7 +991,14 @@ export default function App() {
       <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-8 py-4 glass border border-white/20 rounded-full shadow-2xl flex items-center gap-16`}>
         <NavButton icon={<Home size={22} />} active={view === 'home'} onClick={() => setView('home')} />
         <PlusButton onClick={() => { handleReset(); setView('home'); }} />
-        <NavButton icon={<Heart size={22} />} active={view === 'collection'} onClick={() => setView('collection')} />
+        <div className="relative">
+          <NavButton icon={<Heart size={22} />} active={view === 'collection'} onClick={() => setView('collection')} />
+          {favorites.length > 0 && (
+            <span className="absolute -top-1 -right-1 bg-primary text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center border-2 border-white dark:border-bg-dark">
+              {favorites.length}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Footer */}
@@ -1057,14 +1069,25 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
             <motion.button 
               whileTap={{ scale: 0.8 }}
               onClick={onFavorite}
-              className={`w-10 h-10 rounded-full glass flex items-center justify-center transition-colors ${isFavorite ? 'text-primary fill-primary' : 'text-gray-400 hover:text-primary'}`}
+              className={`w-10 h-10 rounded-full glass flex items-center justify-center transition-colors ${isFavorite ? 'text-primary' : 'text-gray-400 hover:text-primary'}`}
             >
-              <Heart size={18} />
+              {isFavorite ? <BookmarkCheck size={18} className="fill-primary" /> : <Bookmark size={18} />}
             </motion.button>
           </div>
         </div>
 
-        <h3 className="text-2xl font-black mb-4 leading-tight">{recipe.name}</h3>
+        <div className="flex items-center gap-3 mb-2">
+          <h3 className="text-2xl font-black leading-tight">{recipe.name}</h3>
+          {isFavorite && (
+            <motion.span 
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              className="bg-primary/20 text-primary text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1"
+            >
+              <CheckCircle2 size={10} /> SAVED
+            </motion.span>
+          )}
+        </div>
         
         <div className="space-y-2 mb-8">
           <p className="text-[10px] font-black text-primary uppercase tracking-widest">Key Ingredients</p>
