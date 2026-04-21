@@ -40,53 +40,6 @@ async function startServer() {
   app.use(express.json());
   app.use(cookieParser());
 
-  // Firebase Auth Middleware
-  const authenticate = async (req: any, res: any, next: any) => {
-    const token = req.headers.authorization?.split("Bearer ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
-    try {
-      const decodedToken = await admin.auth().verifyIdToken(token);
-      req.user = decodedToken;
-
-      // Auto-track user in users.json if they don't exist yet
-      const users = getUsers();
-      const userIndex = users.findIndex((u: any) => u.uid === decodedToken.uid);
-      
-      if (userIndex === -1) {
-        const newUser = {
-          uid: decodedToken.uid,
-          email: decodedToken.email,
-          name: decodedToken.name || decodedToken.email?.split('@')[0] || "Unknown",
-          favorites: [],
-          createdAt: new Date().toISOString(),
-          lastLogin: new Date().toISOString()
-        };
-        users.push(newUser);
-        saveUsers(users);
-      } else {
-        // Update last active timestamp
-        users[userIndex].lastLogin = new Date().toISOString();
-        if (decodedToken.name && !users[userIndex].name) {
-          users[userIndex].name = decodedToken.name;
-        }
-        saveUsers(users);
-      }
-
-      next();
-    } catch (error) {
-      console.error("Firebase auth error:", error);
-      res.status(401).json({ error: "Invalid session" });
-    }
-  };
-
-  // Debug Logging Middleware
-  app.all("/api/*", (req, res, next) => {
-    const logEntry = `[${new Date().toISOString()}] ${req.method} ${req.url} - IP: ${req.ip}\n`;
-    fs.appendFileSync(path.join(__dirname, "server_logs.txt"), logEntry);
-    next();
-  });
-
   const getUsers = () => {
     try {
       if (!fs.existsSync(USERS_FILE)) return [];
@@ -103,6 +56,73 @@ async function startServer() {
       fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
     } catch (e) {
       console.error("Error saving users:", e);
+    }
+  };
+
+  const getFeedbacks = () => {
+    try {
+      if (!fs.existsSync(FEEDBACK_FILE)) return [];
+      const data = fs.readFileSync(FEEDBACK_FILE, "utf-8");
+      return JSON.parse(data || "[]");
+    } catch (e) {
+      console.error("Error reading feedback:", e);
+      return [];
+    }
+  };
+
+  const saveFeedbacks = (feedbacks: any[]) => {
+    try {
+      fs.writeFileSync(FEEDBACK_FILE, JSON.stringify(feedbacks, null, 2));
+    } catch (e) {
+      console.error("Error saving feedback:", e);
+    }
+  };
+
+  // Firebase Auth Middleware
+  const authenticate = async (req: any, res: any, next: any) => {
+    const logPath = path.join(__dirname, "server_logs.txt");
+    const token = req.headers.authorization?.split("Bearer ")[1];
+    
+    if (!token) {
+      fs.appendFileSync(logPath, `[${new Date().toISOString()}] AUTH_FAIL: Missing token\n`);
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    try {
+      const decodedToken = await admin.auth().verifyIdToken(token);
+      req.user = decodedToken;
+
+      // Auto-track user in users.json
+      const users = getUsers();
+      const userIndex = users.findIndex((u: any) => u.uid === decodedToken.uid);
+      const now = new Date().toISOString();
+      
+      if (userIndex === -1) {
+        const newUser = {
+          uid: decodedToken.uid,
+          email: decodedToken.email,
+          name: decodedToken.name || decodedToken.email?.split('@')[0] || "Unknown",
+          favorites: [],
+          createdAt: now,
+          lastLogin: now
+        };
+        users.push(newUser);
+        saveUsers(users);
+        fs.appendFileSync(logPath, `[${now}] NEW_USER_RECORDED: ${decodedToken.email}\n`);
+      } else {
+        users[userIndex].lastLogin = now;
+        if (decodedToken.name && !users[userIndex].name) {
+          users[userIndex].name = decodedToken.name;
+        }
+        saveUsers(users);
+        fs.appendFileSync(logPath, `[${now}] USER_CHECKIN: ${decodedToken.email}\n`);
+      }
+
+      next();
+    } catch (error) {
+      fs.appendFileSync(logPath, `[${new Date().toISOString()}] AUTH_ERROR: ${error}\n`);
+      console.error("Firebase auth error:", error);
+      res.status(401).json({ error: "Invalid session" });
     }
   };
 
@@ -158,8 +178,7 @@ async function startServer() {
   app.post("/api/feedback", authenticate, (req: any, res: any) => {
     try {
       const { rating, message } = req.body;
-      const rawFeedback = fs.readFileSync(FEEDBACK_FILE, "utf-8");
-      const feedbacks = JSON.parse(rawFeedback || "[]");
+      const feedbacks = getFeedbacks();
       
       feedbacks.push({
         uid: req.user.uid,
@@ -169,7 +188,7 @@ async function startServer() {
         timestamp: new Date().toISOString()
       });
       
-      fs.writeFileSync(FEEDBACK_FILE, JSON.stringify(feedbacks, null, 2));
+      saveFeedbacks(feedbacks);
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: "Failed to save feedback" });

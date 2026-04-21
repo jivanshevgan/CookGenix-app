@@ -22,8 +22,39 @@ export default function App() {
   const [cameraFacing, setCameraFacing] = useState<"user" | "environment">("environment");
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [favorites, setFavorites] = useState<Recipe[]>([]);
-  const [view, setView] = useState<"home" | "collection">("home");
-  const [showRatingModal, setShowRatingModal] = useState(false);
+  const [view, setView] = useState<"home" | "collection" | "admin">("home");
+  const [adminData, setAdminData] = useState<{ users: any[], feedback: any[] } | null>(null);
+  const [loadingAdmin, setLoadingAdmin] = useState(false);
+
+  const isAdmin = user?.email === "jeevanshevgan13@gmail.com";
+
+  const fetchAdminData = async () => {
+    if (!isAdmin || !auth.currentUser) return;
+    setLoadingAdmin(true);
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const [uRes, fRes] = await Promise.all([
+        fetch(`${window.location.origin}/api/admin/export-users`, { headers: { "Authorization": `Bearer ${token}` } }),
+        fetch(`${window.location.origin}/api/admin/export-feedback`, { headers: { "Authorization": `Bearer ${token}` } })
+      ]);
+      if (uRes.ok && fRes.ok) {
+        setAdminData({
+          users: await uRes.json(),
+          feedback: await fRes.json()
+        });
+      }
+    } catch (e) {
+      console.error("Admin fetch failed", e);
+    } finally {
+      setLoadingAdmin(false);
+    }
+  };
+
+  useEffect(() => {
+    if (view === "admin") {
+      fetchAdminData();
+    }
+  }, [view]);
   const [userRating, setUserRating] = useState(0);
   const [feedback, setFeedback] = useState("");
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
@@ -510,6 +541,16 @@ export default function App() {
           >
             {view === 'home' ? <Heart size={20} className="text-primary" /> : <Home size={20} className="text-gray-600 dark:text-gray-400" />}
           </button>
+
+          {isAdmin && (
+            <button 
+              onClick={() => setView(view === 'admin' ? 'home' : 'admin')}
+              className={`p-2 rounded-xl transition-colors ${view === 'admin' ? 'bg-primary/20 text-primary' : (isDarkMode ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10')}`}
+              title="Admin Dashboard"
+            >
+              <UserIcon size={20} />
+            </button>
+          )}
           
           <button 
             onClick={toggleDarkMode}
@@ -530,7 +571,63 @@ export default function App() {
 
       <main className="max-w-4xl mx-auto px-6 pt-24">
         <AnimatePresence mode="wait">
-          {view === 'collection' ? (
+          {view === 'admin' ? (
+            <motion.div
+              key="admin"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-12"
+            >
+              <div className="text-center space-y-4">
+                <h2 className="text-4xl font-black uppercase tracking-tight">Admin <span className="text-primary">Dashboard</span></h2>
+                <p className="text-gray-500 font-medium">Real-time view of system data.</p>
+              </div>
+
+              {loadingAdmin ? (
+                <div className="flex justify-center py-20"><RefreshCcw className="animate-spin text-primary" /></div>
+              ) : (
+                <div className="grid gap-12">
+                  <section className="space-y-6">
+                    <h3 className="text-2xl font-bold flex items-center gap-3"><UserIcon className="text-primary" /> Tracked Users ({adminData?.users?.length || 0})</h3>
+                    <div className="grid gap-4">
+                      {adminData?.users?.map((u: any, i: number) => (
+                        <div key={i} className="p-6 glass rounded-2xl flex flex-col md:flex-row justify-between md:items-center gap-4">
+                          <div>
+                            <p className="font-extrabold text-lg">{u.name}</p>
+                            <p className="text-sm opacity-60 font-mono">{u.email}</p>
+                          </div>
+                          <div className="flex flex-col items-end text-right">
+                            <p className="text-[10px] font-black uppercase opacity-40">Last Logged In</p>
+                            <p className="text-xs font-bold">{new Date(u.lastLogin || u.createdAt).toLocaleString()}</p>
+                            <p className="text-xs text-primary mt-1">{u.favorites?.length || 0} Favorites</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="space-y-6">
+                    <h3 className="text-2xl font-bold flex items-center gap-3"><Star className="text-yellow-500" /> User Feedback ({adminData?.feedback?.length || 0})</h3>
+                    <div className="grid gap-4">
+                      {adminData?.feedback?.map((f: any, i: number) => (
+                        <div key={i} className="p-6 glass rounded-2xl space-y-3">
+                          <div className="flex justify-between items-center">
+                            <div className="flex text-yellow-500">
+                              {[...Array(5)].map((_, i) => <Star key={i} size={14} fill={i < f.rating ? "currentColor" : "none"} />)}
+                            </div>
+                            <span className="text-[10px] font-mono opacity-40">{new Date(f.timestamp).toLocaleString()}</span>
+                          </div>
+                          <p className="font-medium text-sm leading-relaxed italic">"{f.message || "No message left"}"</p>
+                          <p className="text-[10px] font-black uppercase text-primary tracking-widest">{f.email}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+              )}
+            </motion.div>
+          ) : view === 'collection' ? (
             <motion.div
               key="collection"
               initial={{ opacity: 0, y: 20 }}
