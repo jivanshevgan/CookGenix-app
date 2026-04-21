@@ -25,6 +25,7 @@ export default function App() {
   const [view, setView] = useState<"home" | "collection" | "admin">("home");
   const [adminData, setAdminData] = useState<{ users: any[], feedback: any[] } | null>(null);
   const [loadingAdmin, setLoadingAdmin] = useState(false);
+  const [showRatingModal, setShowRatingModal] = useState(false);
 
   const isAdmin = user?.email === "jeevanshevgan13@gmail.com";
 
