@@ -83,21 +83,19 @@ async function startServer() {
       users.push(newUser);
       saveUsers(users);
 
-      const token = jwt.sign({ uid: newUser.uid, email: newUser.email }, JWT_SECRET, { expiresIn: "7d" });
+  const token = jwt.sign({ uid: newUser.uid, email: newUser.email }, JWT_SECRET, { expiresIn: "7d" });
       res.cookie("auth_token", token, { 
         httpOnly: true, 
-        secure: false, // Switch to false for better dev/mobile compatibility
-        sameSite: "lax",
+        secure: true, // Required for iframes/mobile
+        sameSite: "none", // Required for iframes/mobile
         maxAge: 7 * 24 * 60 * 60 * 1000 
       });
 
       const { password: _, ...userWithoutPassword } = newUser;
-      res.setHeader('Content-Type', 'application/json');
-      return res.status(200).send(JSON.stringify({ user: userWithoutPassword, token }));
+      return res.json({ user: userWithoutPassword, token });
     } catch (error) {
       console.error("Signup error:", error);
-      res.setHeader('Content-Type', 'application/json');
-      return res.status(500).send(JSON.stringify({ error: "An unexpected error occurred during signup" }));
+      return res.status(500).json({ error: "An unexpected error occurred during signup" });
     }
   });
 
@@ -119,18 +117,16 @@ async function startServer() {
       const token = jwt.sign({ uid: user.uid, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
       res.cookie("auth_token", token, { 
         httpOnly: true, 
-        secure: false, 
-        sameSite: "lax",
+        secure: true, 
+        sameSite: "none",
         maxAge: 7 * 24 * 60 * 60 * 1000
       });
 
       const { password: _, ...userWithoutPassword } = user;
-      res.setHeader('Content-Type', 'application/json');
-      return res.status(200).send(JSON.stringify({ user: userWithoutPassword, token }));
+      return res.json({ user: userWithoutPassword, token });
     } catch (error) {
       console.error("Login error:", error);
-      res.setHeader('Content-Type', 'application/json');
-      return res.status(500).send(JSON.stringify({ error: "An unexpected error occurred during login" }));
+      return res.status(500).json({ error: "An unexpected error occurred during login" });
     }
   });
 
