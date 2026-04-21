@@ -48,6 +48,31 @@ async function startServer() {
     try {
       const decodedToken = await admin.auth().verifyIdToken(token);
       req.user = decodedToken;
+
+      // Auto-track user in users.json if they don't exist yet
+      const users = getUsers();
+      const userIndex = users.findIndex((u: any) => u.uid === decodedToken.uid);
+      
+      if (userIndex === -1) {
+        const newUser = {
+          uid: decodedToken.uid,
+          email: decodedToken.email,
+          name: decodedToken.name || decodedToken.email?.split('@')[0] || "Unknown",
+          favorites: [],
+          createdAt: new Date().toISOString(),
+          lastLogin: new Date().toISOString()
+        };
+        users.push(newUser);
+        saveUsers(users);
+      } else {
+        // Update last active timestamp
+        users[userIndex].lastLogin = new Date().toISOString();
+        if (decodedToken.name && !users[userIndex].name) {
+          users[userIndex].name = decodedToken.name;
+        }
+        saveUsers(users);
+      }
+
       next();
     } catch (error) {
       console.error("Firebase auth error:", error);
@@ -148,6 +173,28 @@ async function startServer() {
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: "Failed to save feedback" });
+    }
+  });
+
+  // Export Users for Admin
+  app.get("/api/admin/export-users", (req, res) => {
+    if (fs.existsSync(USERS_FILE)) {
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", "attachment; filename=users.json");
+      res.sendFile(USERS_FILE);
+    } else {
+      res.status(404).send("File not found");
+    }
+  });
+
+  // Export Feedback for Admin
+  app.get("/api/admin/export-feedback", (req, res) => {
+    if (fs.existsSync(FEEDBACK_FILE)) {
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", "attachment; filename=feedback.json");
+      res.sendFile(FEEDBACK_FILE);
+    } else {
+      res.status(404).send("File not found");
     }
   });
 
