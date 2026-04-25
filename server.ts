@@ -7,16 +7,10 @@ import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import cors from "cors";
 import admin from "firebase-admin";
+import { getFirestore } from "firebase-admin/firestore";
 import firebaseConfig from "./firebase-applet-config.json";
 
 dotenv.config();
-
-// Initialize Firebase Admin
-if (!admin.apps.length) {
-  admin.initializeApp({
-    projectId: firebaseConfig.projectId,
-  });
-}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,21 +18,35 @@ const __dirname = path.dirname(__filename);
 const USERS_FILE = path.join(__dirname, "users.json");
 const FEEDBACK_FILE = path.join(__dirname, "feedback.json");
 
-// Initialize files
-if (!fs.existsSync(USERS_FILE)) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify([]));
-}
-if (!fs.existsSync(FEEDBACK_FILE)) {
-  fs.writeFileSync(FEEDBACK_FILE, JSON.stringify([]));
+// Firebase Admin Initialization
+if (!admin.apps.length) {
+  admin.initializeApp({
+    projectId: firebaseConfig.projectId,
+  });
 }
 
+const db = getFirestore(firebaseConfig.firestoreDatabaseId || "(default)");
+
 async function startServer() {
+  const logPath = path.join(__dirname, "server_logs.txt");
+  fs.appendFileSync(logPath, `[${new Date().toISOString()}] SYSTEM: Server starting...\n`);
+  
   const app = express();
   const PORT = 3000;
 
   app.use(cors({ origin: true, credentials: true })); // Enable CORS
   app.use(express.json());
   app.use(cookieParser());
+
+  // General Request Logger
+  app.use((req, res, next) => {
+    const logPath = path.join(__dirname, "server_logs.txt");
+    const timestamp = new Date().toISOString();
+    const logEntry = `[${timestamp}] ${req.method} ${req.url} (IP: ${req.ip})\n`;
+    fs.appendFileSync(logPath, logEntry);
+    console.log(logEntry.trim());
+    next();
+  });
 
   const getUsers = () => {
     try {
@@ -84,7 +92,7 @@ async function startServer() {
     const token = req.headers.authorization?.split("Bearer ")[1];
     
     if (!token) {
-      fs.appendFileSync(logPath, `[${new Date().toISOString()}] AUTH_FAIL: Missing token\n`);
+      console.log(`[${new Date().toISOString()}] AUTH_FAIL: Missing token`);
       return res.status(401).json({ error: "Unauthorized" });
     }
 
@@ -92,41 +100,47 @@ async function startServer() {
       const decodedToken = await admin.auth().verifyIdToken(token);
       req.user = decodedToken;
 
-      // Auto-track user in users.json
+      const now = new Date().toISOString();
+      const userEmail = decodedToken.email || "no-email";
+      
       const users = getUsers();
       const userIndex = users.findIndex((u: any) => u.uid === decodedToken.uid);
-      const now = new Date().toISOString();
       
       if (userIndex === -1) {
         const newUser = {
           uid: decodedToken.uid,
-          email: decodedToken.email,
-          name: decodedToken.name || decodedToken.email?.split('@')[0] || "Unknown",
+          email: userEmail,
+          name: decodedToken.name || userEmail.split('@')[0] || "Unknown",
           favorites: [],
           createdAt: now,
-          lastLogin: now
+          lastLogin: now,
+          updatedAt: now
         };
         users.push(newUser);
         saveUsers(users);
-        fs.appendFileSync(logPath, `[${now}] NEW_USER_RECORDED: ${decodedToken.email}\n`);
+        fs.appendFileSync(logPath, `[${now}] DATABASE_WRITE: New User Created (${userEmail})\n`);
       } else {
         users[userIndex].lastLogin = now;
-        if (decodedToken.name && !users[userIndex].name) {
-          users[userIndex].name = decodedToken.name;
-        }
+        users[userIndex].email = userEmail;
+        if (decodedToken.name) users[userIndex].name = decodedToken.name;
+        users[userIndex].updatedAt = now;
         saveUsers(users);
-        fs.appendFileSync(logPath, `[${now}] USER_CHECKIN: ${decodedToken.email}\n`);
+        fs.appendFileSync(logPath, `[${now}] DATABASE_WRITE: User Session Updated (${userEmail})\n`);
       }
 
       next();
     } catch (error) {
-      fs.appendFileSync(logPath, `[${new Date().toISOString()}] AUTH_ERROR: ${error}\n`);
+      fs.appendFileSync(logPath, `[${new Date().toISOString()}] AUTH_ERROR: ${error instanceof Error ? error.message : error}\n`);
       console.error("Firebase auth error:", error);
       res.status(401).json({ error: "Invalid session" });
     }
   };
 
-  // --- Auth Endpoints (Deprecated, now handled on client with Firebase) ---
+  // --- Auth Endpoints ---
+  app.get("/api/auth/ping", authenticate, (req, res) => {
+    res.json({ success: true, user: req.user });
+  });
+
   app.post("/api/auth/logout", (req, res) => {
     res.json({ success: true });
   });
@@ -138,7 +152,6 @@ async function startServer() {
       const uid = req.user.uid;
       const users = getUsers();
       const user = users.find((u: any) => u.uid === uid);
-      
       res.json({ favorites: user?.favorites || [] });
     } catch (e) {
       res.status(500).json({ error: "Failed to fetch favorites" });
@@ -150,24 +163,13 @@ async function startServer() {
       const uid = req.user.uid;
       const { favorites } = req.body;
       const users = getUsers();
-      let userIndex = users.findIndex((u: any) => u.uid === uid);
+      const userIndex = users.findIndex((u: any) => u.uid === uid);
       
-      if (userIndex === -1) {
-        // Create user profile in JSON if it doesn't exist
-        const newUser = {
-          uid,
-          email: req.user.email,
-          name: req.user.name || req.user.email,
-          favorites: [],
-          createdAt: new Date().toISOString()
-        };
-        users.push(newUser);
-        userIndex = users.length - 1;
+      if (userIndex !== -1) {
+        users[userIndex].favorites = favorites;
+        users[userIndex].updatedAt = new Date().toISOString();
+        saveUsers(users);
       }
-
-      users[userIndex].favorites = favorites;
-      users[userIndex].updatedAt = new Date().toISOString();
-      saveUsers(users);
 
       res.json({ success: true });
     } catch (e) {
@@ -212,12 +214,11 @@ async function startServer() {
       return res.status(403).json({ error: "Access denied" });
     }
     
-    if (fs.existsSync(USERS_FILE)) {
-      res.setHeader("Content-Type", "application/json");
-      res.setHeader("Content-Disposition", "attachment; filename=users.json");
-      res.sendFile(USERS_FILE);
-    } else {
-      res.status(404).send("File not found");
+    try {
+      const users = getUsers();
+      res.json(users);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch users" });
     }
   });
 
@@ -228,12 +229,11 @@ async function startServer() {
       return res.status(403).json({ error: "Access denied" });
     }
 
-    if (fs.existsSync(FEEDBACK_FILE)) {
-      res.setHeader("Content-Type", "application/json");
-      res.setHeader("Content-Disposition", "attachment; filename=feedback.json");
-      res.sendFile(FEEDBACK_FILE);
-    } else {
-      res.status(404).send("File not found");
+    try {
+      const feedbacks = getFeedbacks();
+      res.json(feedbacks);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch feedback" });
     }
   });
 

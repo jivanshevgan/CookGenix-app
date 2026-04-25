@@ -592,7 +592,45 @@ export default function App() {
             >
               <div className="text-center space-y-4">
                 <h2 className="text-4xl font-black uppercase tracking-tight">Admin <span className="text-primary">Dashboard</span></h2>
-                <p className="text-gray-500 font-medium">Real-time view of system data.</p>
+                <div className="flex justify-center gap-4">
+                  <button 
+                    onClick={() => {
+                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(adminData?.users, null, 2));
+                      const downloadAnchorNode = document.createElement('a');
+                      downloadAnchorNode.setAttribute("href", dataStr);
+                      downloadAnchorNode.setAttribute("download", "users_backup.json");
+                      document.body.appendChild(downloadAnchorNode);
+                      downloadAnchorNode.click();
+                      downloadAnchorNode.remove();
+                    }}
+                    className="text-[10px] font-black uppercase tracking-widest bg-primary text-white px-4 py-2 rounded-full shadow-lg hover:scale-105 transition-transform"
+                  >
+                    Download Users
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(adminData?.feedback, null, 2));
+                      const downloadAnchorNode = document.createElement('a');
+                      downloadAnchorNode.setAttribute("href", dataStr);
+                      downloadAnchorNode.setAttribute("download", "feedback_backup.json");
+                      document.body.appendChild(downloadAnchorNode);
+                      downloadAnchorNode.click();
+                      downloadAnchorNode.remove();
+                    }}
+                    className="text-[10px] font-black uppercase tracking-widest bg-gray-900 text-white px-4 py-2 rounded-full shadow-lg hover:scale-105 transition-transform"
+                  >
+                    Download Feedback
+                  </button>
+                  <button 
+                    onClick={fetchAdminData}
+                    className="p-2 rounded-full bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+                  >
+                    <RefreshCcw size={16} className={loadingAdmin ? "animate-spin" : ""} />
+                  </button>
+                </div>
+                <p className="text-gray-500 font-medium">
+                  {adminData ? `Last updated: ${new Date().toLocaleTimeString()}` : "Real-time view of system data."}
+                </p>
               </div>
 
               {loadingAdmin ? (
