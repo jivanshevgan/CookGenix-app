@@ -974,25 +974,47 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Recipe Grid */}
-                  <div className="space-y-8">
-                    <h4 className="text-lg font-black uppercase tracking-widest text-primary/80">Tailored For You</h4>
-                    <div className="grid gap-8">
-                      {result.recipes.map((recipe, index) => (
-                        <RecipeCard 
-                          key={index} 
-                          recipe={recipe} 
-                          index={index} 
-                          isDarkMode={isDarkMode} 
-                          isFavorite={isFavorite(recipe)}
-                          onFavorite={() => toggleFavorite(recipe)}
-                          onShare={() => handleShare(recipe)}
-                        />
-                      ))}
+                    {/* Recipe Grid */}
+                    <div className="space-y-8">
+                      <h4 className="text-lg font-black uppercase tracking-widest text-primary/80">Tailored For You</h4>
+                      <div className="grid gap-8">
+                        {result.recipes.map((recipe, index) => (
+                          <RecipeCard 
+                            key={index} 
+                            recipe={recipe} 
+                            index={index} 
+                            isDarkMode={isDarkMode} 
+                            isFavorite={isFavorite(recipe)}
+                            onFavorite={() => toggleFavorite(recipe)}
+                            onShare={() => handleShare(recipe)}
+                          />
+                        ))}
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Extra Buttons */}
+                    {/* Overall Chef's Tip */}
+                    {result.chefsTip && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="p-8 glass rounded-[32px] border-2 border-primary/20 bg-primary/5 space-y-4"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center text-white">
+                            <ChefHat size={20} />
+                          </div>
+                          <div>
+                            <h4 className="text-lg font-black leading-none">Chef's Final Wisdom</h4>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-primary mt-1">General Kitchen Hack</p>
+                          </div>
+                        </div>
+                        <p className="text-sm font-semibold opacity-80 leading-relaxed italic">
+                          "{result.chefsTip}"
+                        </p>
+                      </motion.div>
+                    )}
+
+                    {/* Extra Buttons */}
                   <div className="flex flex-col sm:flex-row gap-4 justify-center py-10">
                     <button 
                       onClick={() => handleShare()}
@@ -1150,10 +1172,33 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
             >
-              <div className="pt-8 border-t border-white/10 mt-6">
-                <p className="text-sm leading-[1.8] font-medium opacity-80 whitespace-pre-line italic">
-                  {recipe.method}
-                </p>
+              <div className="pt-8 border-t border-white/10 mt-6 space-y-8">
+                <div className="space-y-4">
+                  <p className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-2">
+                    <UtensilsCrossed size={12} /> Instructions
+                  </p>
+                  <p className="text-sm leading-[1.8] font-medium opacity-80 whitespace-pre-line italic">
+                    {recipe.method}
+                  </p>
+                </div>
+
+                {recipe.tips && recipe.tips.length > 0 && (
+                  <div className="space-y-4 p-6 rounded-[24px] bg-primary/5 border border-primary/10">
+                    <p className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-2">
+                      <Sparkles size={12} /> Pro-Tips ({recipe.tips.length})
+                    </p>
+                    <ul className="space-y-3">
+                      {recipe.tips.map((tip: string, i: number) => (
+                        <li key={i} className="flex gap-3 text-sm font-semibold opacity-90 leading-relaxed">
+                          <span className="w-5 h-5 rounded-full bg-primary/20 text-primary flex items-center justify-center shrink-0 text-[10px] font-black">
+                            {i + 1}
+                          </span>
+                          <span>{tip}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}

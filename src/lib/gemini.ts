@@ -8,6 +8,7 @@ export interface Recipe {
   ingredients: string[];
   method: string;
   cookingTime: string;
+  tips: string[];
 }
 
 export interface AnalysisResponse {
@@ -31,8 +32,9 @@ export async function analyzeFridgeImage(base64Image: string, mimeType: string):
     5. Language for names and methods: Hinglish (Hindi words in English script for a friendly Indian tone).
     6. Method should be very detailed and provided as a structured numbered list (point-wise).
     7. For each recipe, provide an estimated 'cookingTime' (e.g., '15 mins', '30 mins').
-    8. Provide a creative 'Chef's Tip' at the end that covers food waste or flavor enhancement.
-    9. Tone: Professional, slightly witty, and very helpful.
+    8. For each recipe, provide 3-4 specific 'tips' (good advice, hacks, or flavor boosters) in a point-wise detailed manner.
+    9. Provide a creative general 'Chef's Tip' at the end that covers food waste or flavor enhancement.
+    10. Tone: Professional, slightly witty, and very helpful.
   `;
 
   const responseSchema = {
@@ -52,9 +54,10 @@ export async function analyzeFridgeImage(base64Image: string, mimeType: string):
             type: { type: Type.STRING, description: "Category of the recipe." },
             ingredients: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Ingredients used." },
             method: { type: Type.STRING, description: "Detailed steps in Hinglish." },
-            cookingTime: { type: Type.STRING, description: "Est. time (e.g. 20 mins)." }
+            cookingTime: { type: Type.STRING, description: "Est. time (e.g. 20 mins)." },
+            tips: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Detailed point-wise pro tips for this specific recipe." }
           },
-          required: ["name", "type", "ingredients", "method", "cookingTime"]
+          required: ["name", "type", "ingredients", "method", "cookingTime", "tips"]
         }
       },
       chefsTip: { type: Type.STRING, description: "Witty chef's tip." }
