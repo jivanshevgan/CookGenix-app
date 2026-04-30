@@ -70,8 +70,8 @@ export default function App() {
     try {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SpeechRecognition) {
-        setIsSpeechSupported(true);
         recognitionRef.current = new SpeechRecognition();
+        setIsSpeechSupported(true);
         recognitionRef.current.continuous = true;
         recognitionRef.current.interimResults = true;
         recognitionRef.current.lang = 'en-IN'; // Optimized for Indian English
@@ -212,12 +212,16 @@ export default function App() {
         setIsDarkMode(true);
       }
       
-      const savedDarkMode = localStorage.getItem("darkMode");
-      if (savedDarkMode !== null) {
-        setIsDarkMode(savedDarkMode === "true");
-        if (savedDarkMode === "true") {
-          document.documentElement.classList.add("dark");
+      try {
+        const savedDarkMode = localStorage.getItem("darkMode");
+        if (savedDarkMode !== null) {
+          setIsDarkMode(savedDarkMode === "true");
+          if (savedDarkMode === "true") {
+            document.documentElement.classList.add("dark");
+          }
         }
+      } catch (e) {
+        console.warn("localStorage not accessible", e);
       }
 
       return () => unsubscribe();
@@ -250,7 +254,11 @@ export default function App() {
 
     const scopedKey = auth.currentUser ? `cookgenix_favorites_${auth.currentUser.uid}` : null;
     if (scopedKey && hasFetchedCloud.current) {
-      localStorage.setItem(scopedKey, JSON.stringify(favorites));
+      try {
+        localStorage.setItem(scopedKey, JSON.stringify(favorites));
+      } catch (e) {
+        console.warn("Failed to save to localStorage", e);
+      }
     }
     syncFavorites();
   }, [favorites, authStatus]);
@@ -296,7 +304,11 @@ export default function App() {
   const toggleDarkMode = () => {
     const newMode = !isDarkMode;
     setIsDarkMode(newMode);
-    localStorage.setItem("darkMode", newMode.toString());
+    try {
+      localStorage.setItem("darkMode", newMode.toString());
+    } catch (e) {
+      console.warn("Failed to save preference", e);
+    }
     if (newMode) {
       document.documentElement.classList.add("dark");
     } else {
@@ -747,6 +759,28 @@ export default function App() {
                   )}
                 </div>
               </div>
+
+              {/* Error Display for Home View */}
+              <AnimatePresence>
+                {error && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="max-w-md mx-auto mt-6"
+                  >
+                    <div className="p-4 bg-red-500/10 rounded-2xl border border-red-500/20 text-red-500 text-xs font-bold flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <Info size={14} />
+                        <p>{error}</p>
+                      </div>
+                      <button onClick={() => setError(null)} className="p-1 hover:bg-red-500/10 rounded-lg">
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Speech Transcript Overlay */}
               <AnimatePresence>
