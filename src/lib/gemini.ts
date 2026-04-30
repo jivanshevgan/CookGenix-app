@@ -2,19 +2,58 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+export interface RecipeStep {
+  text: string;
+  visualPrompt: string;
+}
+
 export interface Recipe {
   name: string;
   type: string;
   ingredients: string[];
-  method: string;
+  method: string; // Maintain for backward compatibility
+  steps: RecipeStep[];
   cookingTime: string;
   tips: string[];
+  dishImagePrompt: string;
+  mainImageUrl?: string; // Optional field to store generated URL
 }
 
 export interface AnalysisResponse {
   identifiedIngredients: string[];
   recipes: Recipe[];
   chefsTip: string;
+}
+
+/**
+ * Generates an image based on a text prompt using Gemini's image generation capabilities.
+ */
+export async function generateRecipeImage(prompt: string): Promise<string> {
+  const model = "gemini-2.5-flash-image";
+  try {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: {
+        parts: [{ text: prompt }]
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "1:1"
+        }
+      }
+    });
+
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
+      }
+    }
+    throw new Error("No image data returned from model");
+  } catch (error) {
+    console.error("Image generation failed:", error);
+    // Fallback to a placeholder if generation fails
+    return `https://picsum.photos/seed/${encodeURIComponent(prompt.substring(0, 10))}/400/400`;
+  }
 }
 
 export async function analyzeFridgeImage(base64Image: string, mimeType: string): Promise<AnalysisResponse> {
@@ -30,11 +69,15 @@ export async function analyzeFridgeImage(base64Image: string, mimeType: string):
     3. If the user context seems Indian, prioritize wholesome Indian fusion recipes.
     4. Assume basic pantry staples like salt, oil, turmeric, spices are available.
     5. Language for names and methods: Hinglish (Hindi words in English script for a friendly Indian tone).
-    6. Method should be very detailed and provided as a structured numbered list (point-wise).
-    7. For each recipe, provide an estimated 'cookingTime' (e.g., '15 mins', '30 mins').
-    8. For each recipe, provide 3-4 specific 'tips' (good advice, hacks, or flavor boosters) in a point-wise detailed manner.
-    9. Provide a creative general 'Chef's Tip' at the end that covers food waste or flavor enhancement.
-    10. Tone: Professional, slightly witty, and very helpful.
+    6. Provide a detailed 'method' string (as before) AND a 'steps' array.
+    7. Each entry in 'steps' must have:
+       - 'text': The instruction for that step.
+       - 'visualPrompt': A highly descriptive, photorealistic prompt for an image generator showing this specific cooking step (e.g., "A close-up shot of chopped onions being sautéed in a steel pan with golden oil, steam rising, warm kitchen lighting").
+    8. Provide a 'dishImagePrompt': A descriptive prompt for a final plated shot of the dish.
+    9. For each recipe, provide an estimated 'cookingTime' (e.g., '15 mins', '30 mins').
+    10. For each recipe, provide 3-4 specific 'tips' (good advice, hacks, or flavor boosters).
+    11. Provide a creative general 'Chef's Tip' at the end.
+    12. Tone: Professional, slightly witty, and very helpful.
   `;
 
   const responseSchema = {
@@ -53,11 +96,23 @@ export async function analyzeFridgeImage(base64Image: string, mimeType: string):
             name: { type: Type.STRING, description: "Catchy Hinglish name for the dish." },
             type: { type: Type.STRING, description: "Category of the recipe." },
             ingredients: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Ingredients used." },
-            method: { type: Type.STRING, description: "Detailed steps in Hinglish." },
+            method: { type: Type.STRING, description: "Detailed steps in Hinglish as a single string." },
+            steps: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  text: { type: Type.STRING },
+                  visualPrompt: { type: Type.STRING, description: "Descriptive image prompt for this step." }
+                },
+                required: ["text", "visualPrompt"]
+              }
+            },
+            dishImagePrompt: { type: Type.STRING, description: "Image prompt for the final dish." },
             cookingTime: { type: Type.STRING, description: "Est. time (e.g. 20 mins)." },
             tips: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Detailed point-wise pro tips for this specific recipe." }
           },
-          required: ["name", "type", "ingredients", "method", "cookingTime", "tips"]
+          required: ["name", "type", "ingredients", "method", "steps", "dishImagePrompt", "cookingTime", "tips"]
         }
       },
       chefsTip: { type: Type.STRING, description: "Witty chef's tip." }
@@ -108,11 +163,15 @@ export async function analyzeIngredientsText(text: string): Promise<AnalysisResp
     3. Prioritize wholesome Indian fusion recipes if relevant.
     4. Assume basic pantry staples like salt, oil, turmeric, spices are available.
     5. Language for names and methods: Hinglish (Hindi words in English script for a friendly Indian tone).
-    6. Method should be very detailed and provided as a structured numbered list (point-wise).
-    7. For each recipe, provide an estimated 'cookingTime' (e.g., '15 mins', '30 mins').
-    8. For each recipe, provide 3-4 specific 'tips' (good advice, hacks, or flavor boosters) in a point-wise detailed manner.
-    9. Provide a creative general 'Chef's Tip' at the end that covers food waste or flavor enhancement.
-    10. Tone: Professional, slightly witty, and very helpful.
+    6. Provide a detailed 'method' string AND a 'steps' array.
+    7. Each entry in 'steps' must have:
+       - 'text': The instruction for that step.
+       - 'visualPrompt': A highly descriptive, photorealistic prompt for an image generator (e.g., "A clean wooden board with freshly chopped vibrant vegetables and a sharp knife, natural window light").
+    8. Provide a 'dishImagePrompt': A descriptive prompt for a final plated shot of the dish.
+    9. For each recipe, provide an estimated 'cookingTime' (e.g., '15 mins', '30 mins').
+    10. For each recipe, provide 3-4 specific 'tips'.
+    11. Provide a creative general 'Chef's Tip' at the end.
+    12. Tone: Professional, slightly witty, and very helpful.
   `;
 
   const responseSchema = {
@@ -131,11 +190,23 @@ export async function analyzeIngredientsText(text: string): Promise<AnalysisResp
             name: { type: Type.STRING, description: "Catchy Hinglish name for the dish." },
             type: { type: Type.STRING, description: "Category of the recipe." },
             ingredients: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Ingredients used." },
-            method: { type: Type.STRING, description: "Detailed steps in Hinglish." },
+            method: { type: Type.STRING, description: "Detailed steps in Hinglish as a single string." },
+            steps: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  text: { type: Type.STRING },
+                  visualPrompt: { type: Type.STRING, description: "Descriptive image prompt for this step." }
+                },
+                required: ["text", "visualPrompt"]
+              }
+            },
+            dishImagePrompt: { type: Type.STRING, description: "Image prompt for the final dish." },
             cookingTime: { type: Type.STRING, description: "Est. time (e.g. 20 mins)." },
             tips: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Detailed point-wise pro tips for this specific recipe." }
           },
-          required: ["name", "type", "ingredients", "method", "cookingTime", "tips"]
+          required: ["name", "type", "ingredients", "method", "steps", "dishImagePrompt", "cookingTime", "tips"]
         }
       },
       chefsTip: { type: Type.STRING, description: "Witty chef's tip." }

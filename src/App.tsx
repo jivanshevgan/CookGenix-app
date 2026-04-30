@@ -7,7 +7,14 @@ import {
   Plus, Star, Clock, LogOut, User as UserIcon, Bookmark, BookmarkCheck,
   Image as ImageIcon, Mic, MicOff, RotateCcw
 } from "lucide-react";
-import { analyzeFridgeImage, analyzeIngredientsText, type AnalysisResponse, type Recipe } from "./lib/gemini";
+import { 
+  analyzeFridgeImage, 
+  analyzeIngredientsText, 
+  generateRecipeImage,
+  type AnalysisResponse, 
+  type Recipe,
+  type RecipeStep
+} from "./lib/gemini";
 import { AuthScreen } from "./components/AuthScreen";
 import { auth } from "./lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
@@ -1033,6 +1040,26 @@ function CaptureCard({ title, desc, icon, onClick, primary, isDarkMode }: any) {
 
 function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any) {
   const [isOpen, setIsOpen] = useState(false);
+  const [mainImageUrl, setMainImageUrl] = useState<string | null>(recipe.mainImageUrl || null);
+  const [isGeneratingMain, setIsGeneratingMain] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && !mainImageUrl && recipe.dishImagePrompt && !isGeneratingMain) {
+      const loadMainImage = async () => {
+        setIsGeneratingMain(true);
+        try {
+          const url = await generateRecipeImage(recipe.dishImagePrompt);
+          setMainImageUrl(url);
+          // If we wanted to persist this, we'd need to update the parent state or firestore
+        } catch (e) {
+          console.error("Main image failed", e);
+        } finally {
+          setIsGeneratingMain(false);
+        }
+      };
+      loadMainImage();
+    }
+  }, [isOpen, recipe.dishImagePrompt]);
   
   return (
     <motion.div
@@ -1041,49 +1068,99 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
       viewport={{ once: true }}
       className={`rounded-[32px] overflow-hidden border-2 transition-all duration-300 ${isDarkMode ? 'bg-white/5 border-white/5' : 'bg-white border-gray-100 shadow-xl'}`}
     >
-      <div className="p-8">
-        <div className="flex justify-between items-start mb-6">
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-3 px-4 py-2 glass rounded-2xl">
-              <span className="text-[10px] font-black uppercase tracking-widest">{recipe.type}</span>
+      {/* Featured Dish Image */}
+      {isOpen && (
+        <div className="relative h-48 md:h-64 bg-black/5 dark:bg-white/5 overflow-hidden">
+          {mainImageUrl ? (
+            <motion.img 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              src={mainImageUrl} 
+              alt={recipe.name} 
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          ) : isGeneratingMain ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+              <Sparkles className="text-primary animate-pulse" size={24} />
+              <span className="text-[10px] font-black uppercase tracking-widest opacity-40">Styling the dish...</span>
             </div>
-            {recipe.cookingTime && (
-              <div className="flex items-center gap-2 px-3 py-2 glass rounded-2xl text-[10px] font-black uppercase tracking-widest text-primary">
-                <Clock size={12} />
-                <span>{recipe.cookingTime}</span>
+          ) : null}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+          <div className="absolute bottom-6 left-8">
+            <h3 className="text-2xl font-black text-white leading-tight">{recipe.name}</h3>
+          </div>
+        </div>
+      )}
+
+      <div className="p-8">
+        {!isOpen && (
+          <div className="flex justify-between items-start mb-6">
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3 px-4 py-2 glass rounded-2xl">
+                <span className="text-[10px] font-black uppercase tracking-widest">{recipe.type}</span>
               </div>
+              {recipe.cookingTime && (
+                <div className="flex items-center gap-2 px-3 py-2 glass rounded-2xl text-[10px] font-black uppercase tracking-widest text-primary">
+                  <Clock size={12} />
+                  <span>{recipe.cookingTime}</span>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <motion.button 
+                whileTap={{ scale: 0.8 }}
+                onClick={onShare}
+                className="w-10 h-10 rounded-full glass flex items-center justify-center text-gray-400 hover:text-primary transition-colors"
+              >
+                <Share2 size={18} />
+              </motion.button>
+              <motion.button 
+                whileTap={{ scale: 0.8 }}
+                onClick={onFavorite}
+                className={`w-10 h-10 rounded-full glass flex items-center justify-center transition-colors ${isFavorite ? 'text-primary' : 'text-gray-400 hover:text-primary'}`}
+              >
+                {isFavorite ? <BookmarkCheck size={18} className="fill-primary" /> : <Bookmark size={18} />}
+              </motion.button>
+            </div>
+          </div>
+        )}
+
+        {isOpen && (
+           <div className="flex justify-end items-center mb-4 -mt-2">
+              <div className="flex items-center gap-2">
+                <motion.button 
+                  whileTap={{ scale: 0.8 }}
+                  onClick={onShare}
+                  className="w-8 h-8 rounded-full glass flex items-center justify-center text-gray-400 hover:text-primary transition-colors"
+                >
+                  <Share2 size={14} />
+                </motion.button>
+                <motion.button 
+                  whileTap={{ scale: 0.8 }}
+                  onClick={onFavorite}
+                  className={`w-8 h-8 rounded-full glass flex items-center justify-center transition-colors ${isFavorite ? 'text-primary' : 'text-gray-400 hover:text-primary'}`}
+                >
+                  {isFavorite ? <BookmarkCheck size={14} className="fill-primary" /> : <Bookmark size={14} />}
+                </motion.button>
+              </div>
+           </div>
+        )}
+
+        {!isOpen && (
+          <div className="flex items-center gap-3 mb-2">
+            <h3 className="text-2xl font-black leading-tight">{recipe.name}</h3>
+            {isFavorite && (
+              <motion.span 
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                className="bg-primary/20 text-primary text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1"
+              >
+                <CheckCircle2 size={10} /> SAVED
+              </motion.span>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <motion.button 
-              whileTap={{ scale: 0.8 }}
-              onClick={onShare}
-              className="w-10 h-10 rounded-full glass flex items-center justify-center text-gray-400 hover:text-primary transition-colors"
-            >
-              <Share2 size={18} />
-            </motion.button>
-            <motion.button 
-              whileTap={{ scale: 0.8 }}
-              onClick={onFavorite}
-              className={`w-10 h-10 rounded-full glass flex items-center justify-center transition-colors ${isFavorite ? 'text-primary' : 'text-gray-400 hover:text-primary'}`}
-            >
-              {isFavorite ? <BookmarkCheck size={18} className="fill-primary" /> : <Bookmark size={18} />}
-            </motion.button>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 mb-2">
-          <h3 className="text-2xl font-black leading-tight">{recipe.name}</h3>
-          {isFavorite && (
-            <motion.span 
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              className="bg-primary/20 text-primary text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1"
-            >
-              <CheckCircle2 size={10} /> SAVED
-            </motion.span>
-          )}
-        </div>
+        )}
         
         <div className="space-y-2 mb-8">
           <p className="text-[10px] font-black text-primary uppercase tracking-widest">Key Ingredients</p>
@@ -1096,7 +1173,7 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
           onClick={() => setIsOpen(!isOpen)}
           className={`w-full py-4 px-6 rounded-2xl flex items-center justify-between font-bold text-sm transition-colors ${isDarkMode ? 'bg-white/10 hover:bg-white/20' : 'bg-black/5 hover:bg-black/10'}`}
         >
-          <span>See Full Recipe</span>
+          <span>{isOpen ? 'Minimize Recipe' : 'See Full Recipe'}</span>
           <ChevronRight size={18} className={`transition-transform duration-300 ${isOpen ? 'rotate-90' : ''}`} />
         </button>
 
@@ -1108,14 +1185,22 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
             >
-              <div className="pt-8 border-t border-white/10 mt-6 space-y-8">
-                <div className="space-y-4">
+              <div className="pt-8 border-t border-white/10 mt-6 space-y-12">
+                {/* Step-by-Step Visual Guide */}
+                <div className="space-y-6">
                   <p className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-2">
-                    <UtensilsCrossed size={12} /> Instructions
+                    <ImageIcon size={12} /> Step-by-Step Visual Guide
                   </p>
-                  <p className="text-sm leading-[1.8] font-medium opacity-80 whitespace-pre-line italic">
-                    {recipe.method}
-                  </p>
+                  <div className="space-y-10">
+                    {(recipe.steps || []).map((step: RecipeStep, i: number) => (
+                      <StepWithVisual key={i} step={step} index={i} isDarkMode={isDarkMode} />
+                    ))}
+                    {!recipe.steps && (
+                       <p className="text-sm leading-[1.8] font-medium opacity-80 whitespace-pre-line italic">
+                          {recipe.method}
+                       </p>
+                    )}
+                  </div>
                 </div>
 
                 {recipe.tips && recipe.tips.length > 0 && (
@@ -1141,6 +1226,80 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
         </AnimatePresence>
       </div>
     </motion.div>
+  );
+}
+
+function StepWithVisual({ step, index, isDarkMode }: any) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const hasGenerated = useRef(false);
+
+  // Auto-generate step image when visible
+  // We don't want to spam generation, so we hide it behind a button or use a low cost 
+  // For the "Enhanced" request, let's make them clickable to see the visual
+  const handleGenerate = async () => {
+    if (isLoading || imageUrl) return;
+    setIsLoading(true);
+    try {
+      const url = await generateRecipeImage(step.visualPrompt);
+      setImageUrl(url);
+    } catch (e) {
+      console.error("Step image failed", e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="grid md:grid-cols-[1fr_200px] gap-6 group">
+      <div className="space-y-3">
+        <div className="flex items-center gap-3">
+          <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-black shrink-0">
+            {index + 1}
+          </span>
+          <p className="text-sm leading-[1.6] font-medium opacity-90">
+            {step.text}
+          </p>
+        </div>
+      </div>
+
+      <div className="relative">
+        {imageUrl ? (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="aspect-square rounded-2xl overflow-hidden shadow-lg border-2 border-primary/10"
+          >
+            <img 
+              src={imageUrl} 
+              alt={`Step ${index + 1}`} 
+              className="w-full h-full object-cover" 
+              referrerPolicy="no-referrer"
+            />
+          </motion.div>
+        ) : (
+          <button 
+            onClick={handleGenerate}
+            disabled={isLoading}
+            className={`w-full aspect-square rounded-2xl border-2 border-dashed flex flex-col items-center justify-center gap-2 transition-all ${
+              isDarkMode ? 'border-white/10 hover:border-primary/50 bg-white/5' : 'border-gray-200 hover:border-primary/50 bg-gray-50'
+            }`}
+          >
+            {isLoading ? (
+              <>
+                <RefreshCcw className="text-primary animate-spin" size={20} />
+                <span className="text-[10px] font-black uppercase tracking-tighter opacity-40">Sketching...</span>
+              </>
+            ) : (
+              <>
+                <ImageIcon className="text-gray-400 group-hover:text-primary transition-colors" size={20} />
+                <span className="text-[9px] font-black uppercase tracking-tighter opacity-40 group-hover:opacity-100 transition-opacity">Visualize</span>
+              </>
+            )}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
