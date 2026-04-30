@@ -61,6 +61,7 @@ export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [isSpeechSupported, setIsSpeechSupported] = useState(false);
+  const hasFetchedCloud = useRef(false);
 
   const recognitionRef = useRef<any>(null);
 
@@ -191,11 +192,18 @@ export default function App() {
             }
           } catch (err) {
             console.error("Failed to sync session", err);
+          } finally {
+            hasFetchedCloud.current = true;
           }
         } else {
           setUser(null);
           setAuthStatus("unauthenticated");
-          setFavorites([]); // CRITICAL: Clear favorites on logout to prevent data leak
+          setFavorites([]); // Clear favorites
+          setResult(null); // Clear last recipe results
+          setImage(null); // Clear last uploaded image
+          setView("home"); // Reset view
+          setAdminData(null); // Clear admin data
+          hasFetchedCloud.current = false;
         }
       });
       
@@ -222,7 +230,8 @@ export default function App() {
   // Sync favorites to backend
   useEffect(() => {
     const syncFavorites = async () => {
-      if (authStatus !== "authenticated" || !auth.currentUser) return;
+      // PREVENT OVERWRITE: Only sync if authenticated AND we have successfully fetched the cloud state once
+      if (authStatus !== "authenticated" || !auth.currentUser || !hasFetchedCloud.current) return;
       
       try {
         const token = await auth.currentUser.getIdToken();
@@ -240,7 +249,7 @@ export default function App() {
     };
 
     const scopedKey = auth.currentUser ? `cookgenix_favorites_${auth.currentUser.uid}` : null;
-    if (scopedKey) {
+    if (scopedKey && hasFetchedCloud.current) {
       localStorage.setItem(scopedKey, JSON.stringify(favorites));
     }
     syncFavorites();
