@@ -1042,6 +1042,17 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
   const [isOpen, setIsOpen] = useState(false);
   const [mainImageUrl, setMainImageUrl] = useState<string | null>(recipe.mainImageUrl || null);
   const [isGeneratingMain, setIsGeneratingMain] = useState(false);
+  const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
+
+  const toggleStep = (index: number) => {
+    const newSteps = new Set(completedSteps);
+    if (newSteps.has(index)) {
+      newSteps.delete(index);
+    } else {
+      newSteps.add(index);
+    }
+    setCompletedSteps(newSteps);
+  };
 
   useEffect(() => {
     if (isOpen && !mainImageUrl && recipe.dishImagePrompt && !isGeneratingMain) {
@@ -1193,7 +1204,14 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
                   </p>
                   <div className="space-y-10">
                     {(recipe.steps || []).map((step: RecipeStep, i: number) => (
-                      <StepWithVisual key={i} step={step} index={i} isDarkMode={isDarkMode} />
+                      <StepWithVisual 
+                        key={i} 
+                        step={step} 
+                        index={i} 
+                        isDarkMode={isDarkMode}
+                        isCompleted={completedSteps.has(i)}
+                        onToggle={() => toggleStep(i)}
+                      />
                     ))}
                     {!recipe.steps && (
                        <p className="text-sm leading-[1.8] font-medium opacity-80 whitespace-pre-line italic">
@@ -1229,7 +1247,7 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
   );
 }
 
-function StepWithVisual({ step, index, isDarkMode }: any) {
+function StepWithVisual({ step, index, isDarkMode, isCompleted, onToggle }: any) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const hasGenerated = useRef(false);
@@ -1237,12 +1255,14 @@ function StepWithVisual({ step, index, isDarkMode }: any) {
   // Auto-generate step image when visible
   // We don't want to spam generation, so we hide it behind a button or use a low cost 
   // For the "Enhanced" request, let's make them clickable to see the visual
-  const handleGenerate = async () => {
+  const handleGenerate = (e: any) => {
+    e.stopPropagation(); // Don't toggle completion when clicking visualize
     if (isLoading || imageUrl) return;
     setIsLoading(true);
     try {
-      const url = await generateRecipeImage(step.visualPrompt);
-      setImageUrl(url);
+      generateRecipeImage(step.visualPrompt).then(url => {
+        setImageUrl(url);
+      });
     } catch (e) {
       console.error("Step image failed", e);
     } finally {
@@ -1251,15 +1271,40 @@ function StepWithVisual({ step, index, isDarkMode }: any) {
   };
 
   return (
-    <div className="grid md:grid-cols-[1fr_200px] gap-6 group">
+    <div 
+      onClick={onToggle}
+      className={`grid md:grid-cols-[1fr_200px] gap-6 group cursor-pointer p-4 -m-4 rounded-3xl transition-all duration-300 ${
+        isCompleted ? (isDarkMode ? 'bg-green-500/5 opacity-60' : 'bg-green-50/50 opacity-60') : 'hover:bg-black/5 dark:hover:bg-white/5'
+      }`}
+    >
       <div className="space-y-3">
-        <div className="flex items-center gap-3">
-          <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-black shrink-0">
-            {index + 1}
-          </span>
-          <p className="text-sm leading-[1.6] font-medium opacity-90">
-            {step.text}
-          </p>
+        <div className="flex items-start gap-4">
+          <div className="pt-1">
+            <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${
+              isCompleted 
+                ? 'bg-green-500 border-green-500 text-white' 
+                : (isDarkMode ? 'border-white/20' : 'border-gray-200')
+            }`}>
+              {isCompleted && <CheckCircle2 size={14} />}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <span className={`text-[10px] font-black uppercase tracking-widest ${isCompleted ? 'text-green-500' : 'text-primary'}`}>
+                Step {index + 1}
+              </span>
+              {isCompleted && (
+                <span className="text-[10px] font-black text-green-500 uppercase tracking-widest">
+                  Completed
+                </span>
+              )}
+            </div>
+            <p className={`text-sm leading-[1.6] font-medium transition-all ${
+              isCompleted ? 'line-through opacity-50' : 'opacity-90'
+            }`}>
+              {step.text}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -1268,7 +1313,9 @@ function StepWithVisual({ step, index, isDarkMode }: any) {
           <motion.div 
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="aspect-square rounded-2xl overflow-hidden shadow-lg border-2 border-primary/10"
+            className={`aspect-square rounded-2xl overflow-hidden shadow-lg border-2 transition-all ${
+              isCompleted ? 'border-green-500/30' : 'border-primary/10'
+            }`}
           >
             <img 
               src={imageUrl} 
