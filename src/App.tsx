@@ -60,6 +60,7 @@ export default function App() {
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
+  const [isSpeechSupported, setIsSpeechSupported] = useState(false);
 
   const recognitionRef = useRef<any>(null);
 
@@ -68,6 +69,7 @@ export default function App() {
     try {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SpeechRecognition) {
+        setIsSpeechSupported(true);
         recognitionRef.current = new SpeechRecognition();
         recognitionRef.current.continuous = true;
         recognitionRef.current.interimResults = true;
@@ -162,20 +164,30 @@ export default function App() {
           });
           setAuthStatus("authenticated");
 
-          // Fetch favorites from backend
+          // Load UID-scoped favorites from localStorage for immediate UI feedback
+          const scopedKey = `cookgenix_favorites_${firebaseUser.uid}`;
+          const savedScoped = localStorage.getItem(scopedKey);
+          if (savedScoped) {
+            try {
+              setFavorites(JSON.parse(savedScoped));
+            } catch (e) {
+              console.error("Failed to load scoped favorites", e);
+            }
+          }
+
+          // Fetch fresh favorites from backend to stay in sync
           try {
             const token = await firebaseUser.getIdToken();
-            // First, "Ping" the server to ensure user is tracked/created
-            await fetch(`${window.location.origin}/api/auth/ping`, {
-              headers: { "Authorization": `Bearer ${token}` }
-            });
-
             const response = await fetch(`${window.location.origin}/api/favorites`, {
               headers: { "Authorization": `Bearer ${token}` }
             });
             if (response.ok) {
               const data = await response.json();
-              if (data.favorites) setFavorites(data.favorites);
+              if (data.favorites) {
+                setFavorites(data.favorites);
+                // Also update scoped localStorage
+                localStorage.setItem(scopedKey, JSON.stringify(data.favorites));
+              }
             }
           } catch (err) {
             console.error("Failed to sync session", err);
@@ -183,17 +195,9 @@ export default function App() {
         } else {
           setUser(null);
           setAuthStatus("unauthenticated");
+          setFavorites([]); // CRITICAL: Clear favorites on logout to prevent data leak
         }
       });
-
-      const saved = localStorage.getItem("cookgenix_favorites");
-      if (saved) {
-        try {
-          setFavorites(JSON.parse(saved));
-        } catch (e) {
-          console.error("Failed to load favorites", e);
-        }
-      }
       
       // Check dark mode preference
       if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
@@ -235,7 +239,10 @@ export default function App() {
       }
     };
 
-    localStorage.setItem("cookgenix_favorites", JSON.stringify(favorites));
+    const scopedKey = auth.currentUser ? `cookgenix_favorites_${auth.currentUser.uid}` : null;
+    if (scopedKey) {
+      localStorage.setItem(scopedKey, JSON.stringify(favorites));
+    }
     syncFavorites();
   }, [favorites, authStatus]);
 
@@ -714,14 +721,21 @@ export default function App() {
                 </div>
 
                 {/* Voice Integration */}
-                <div className="relative group">
+                <div className={`relative group ${!isSpeechSupported ? 'opacity-40 grayscale cursor-not-allowed' : ''}`}>
                   <CaptureCard 
                     title="Voice" 
-                    desc={isListening ? "Listening..." : "Tell Chef"} 
+                    desc={!isSpeechSupported ? "Not Supported" : (isListening ? "Listening..." : "Tell Chef")} 
                     icon={isListening ? <MicOff size={24} className="text-red-500 animate-pulse" /> : <Mic size={24} />} 
-                    onClick={toggleListening}
+                    onClick={isSpeechSupported ? toggleListening : () => setError("Arre! Your browser doesn't support the Voice Chef feature.")}
                     isDarkMode={isDarkMode}
                   />
+                  {!isSpeechSupported && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+                      <div className="bg-black/80 text-white text-[8px] font-black px-2 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity uppercase tracking-tighter">
+                        Browser limit
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 

@@ -12,7 +12,12 @@
         "photoURL": { "type": "string", "format": "uri", "description": "URL to the user's profile photo" },
         "provider": { "type": "string", "enum": ["google", "phone", "email"], "description": "Primary login provider used" },
         "createdAt": { "type": "string", "format": "date-time", "description": "When the account was created" },
-        "updatedAt": { "type": "string", "format": "date-time", "description": "When the account was last updated" }
+        "updatedAt": { "type": "string", "format": "date-time", "description": "When the account was last updated" },
+        "favorites": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "User's favorite recipes"
+        }
       },
       "required": ["uid", "name", "createdAt", "updatedAt"]
     }

@@ -38,54 +38,6 @@ async function startServer() {
   app.use(express.json());
   app.use(cookieParser());
 
-  // General Request Logger
-  app.use((req, res, next) => {
-    const logPath = path.join(__dirname, "server_logs.txt");
-    const timestamp = new Date().toISOString();
-    const logEntry = `[${timestamp}] ${req.method} ${req.url} (IP: ${req.ip})\n`;
-    fs.appendFileSync(logPath, logEntry);
-    console.log(logEntry.trim());
-    next();
-  });
-
-  const getUsers = () => {
-    try {
-      if (!fs.existsSync(USERS_FILE)) return [];
-      const data = fs.readFileSync(USERS_FILE, "utf-8");
-      return JSON.parse(data || "[]");
-    } catch (e) {
-      console.error("Error reading users:", e);
-      return [];
-    }
-  };
-
-  const saveUsers = (users: any[]) => {
-    try {
-      fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
-    } catch (e) {
-      console.error("Error saving users:", e);
-    }
-  };
-
-  const getFeedbacks = () => {
-    try {
-      if (!fs.existsSync(FEEDBACK_FILE)) return [];
-      const data = fs.readFileSync(FEEDBACK_FILE, "utf-8");
-      return JSON.parse(data || "[]");
-    } catch (e) {
-      console.error("Error reading feedback:", e);
-      return [];
-    }
-  };
-
-  const saveFeedbacks = (feedbacks: any[]) => {
-    try {
-      fs.writeFileSync(FEEDBACK_FILE, JSON.stringify(feedbacks, null, 2));
-    } catch (e) {
-      console.error("Error saving feedback:", e);
-    }
-  };
-
   // Firebase Auth Middleware
   const authenticate = async (req: any, res: any, next: any) => {
     const logPath = path.join(__dirname, "server_logs.txt");
@@ -102,13 +54,14 @@ async function startServer() {
 
       const now = new Date().toISOString();
       const userEmail = decodedToken.email || "no-email";
+      const uid = decodedToken.uid;
       
-      const users = getUsers();
-      const userIndex = users.findIndex((u: any) => u.uid === decodedToken.uid);
+      const userRef = db.collection("users").doc(uid);
+      const userDoc = await userRef.get();
       
-      if (userIndex === -1) {
+      if (!userDoc.exists) {
         const newUser = {
-          uid: decodedToken.uid,
+          uid: uid,
           email: userEmail,
           name: decodedToken.name || userEmail.split('@')[0] || "Unknown",
           favorites: [],
@@ -116,16 +69,17 @@ async function startServer() {
           lastLogin: now,
           updatedAt: now
         };
-        users.push(newUser);
-        saveUsers(users);
-        fs.appendFileSync(logPath, `[${now}] DATABASE_WRITE: New User Created (${userEmail})\n`);
+        await userRef.set(newUser);
+        fs.appendFileSync(logPath, `[${now}] DATABASE_WRITE: New User Created in Firestore (${userEmail})\n`);
       } else {
-        users[userIndex].lastLogin = now;
-        users[userIndex].email = userEmail;
-        if (decodedToken.name) users[userIndex].name = decodedToken.name;
-        users[userIndex].updatedAt = now;
-        saveUsers(users);
-        fs.appendFileSync(logPath, `[${now}] DATABASE_WRITE: User Session Updated (${userEmail})\n`);
+        const updateData: any = {
+          lastLogin: now,
+          email: userEmail,
+          updatedAt: now
+        };
+        if (decodedToken.name) updateData.name = decodedToken.name;
+        await userRef.update(updateData);
+        fs.appendFileSync(logPath, `[${now}] DATABASE_WRITE: User Session Updated in Firestore (${userEmail})\n`);
       }
 
       next();
@@ -147,42 +101,39 @@ async function startServer() {
 
   // --- Data Persistence Endpoints ---
 
-  app.get("/api/favorites", authenticate, (req: any, res: any) => {
+  app.get("/api/favorites", authenticate, async (req: any, res: any) => {
     try {
       const uid = req.user.uid;
-      const users = getUsers();
-      const user = users.find((u: any) => u.uid === uid);
-      res.json({ favorites: user?.favorites || [] });
+      const userDoc = await db.collection("users").doc(uid).get();
+      res.json({ favorites: userDoc.data()?.favorites || [] });
     } catch (e) {
+      console.error("Fetch favorites error:", e);
       res.status(500).json({ error: "Failed to fetch favorites" });
     }
   });
 
-  app.post("/api/favorites", authenticate, (req: any, res: any) => {
+  app.post("/api/favorites", authenticate, async (req: any, res: any) => {
     try {
       const uid = req.user.uid;
       const { favorites } = req.body;
-      const users = getUsers();
-      const userIndex = users.findIndex((u: any) => u.uid === uid);
       
-      if (userIndex !== -1) {
-        users[userIndex].favorites = favorites;
-        users[userIndex].updatedAt = new Date().toISOString();
-        saveUsers(users);
-      }
+      await db.collection("users").doc(uid).update({
+        favorites,
+        updatedAt: new Date().toISOString()
+      });
 
       res.json({ success: true });
     } catch (e) {
+      console.error("Save favorites error:", e);
       res.status(500).json({ error: "Failed to save favorites" });
     }
   });
 
-  app.post("/api/feedback", authenticate, (req: any, res: any) => {
+  app.post("/api/feedback", authenticate, async (req: any, res: any) => {
     try {
       const { rating, message } = req.body;
-      const feedbacks = getFeedbacks();
       
-      feedbacks.push({
+      await db.collection("feedback").add({
         uid: req.user.uid,
         email: req.user.email,
         rating,
@@ -190,9 +141,9 @@ async function startServer() {
         timestamp: new Date().toISOString()
       });
       
-      saveFeedbacks(feedbacks);
       res.json({ success: true });
     } catch (e) {
+      console.error("Save feedback error:", e);
       res.status(500).json({ error: "Failed to save feedback" });
     }
   });
@@ -202,20 +153,16 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // User Ping (Triggers check-in/tracking)
-  app.get("/api/auth/ping", authenticate, (req: any, res: any) => {
-    res.json({ success: true, user: req.user });
-  });
-
   // Export Users for Admin
-  app.get("/api/admin/export-users", authenticate, (req: any, res: any) => {
+  app.get("/api/admin/export-users", authenticate, async (req: any, res: any) => {
     // Only allow specific admin email
     if (req.user.email !== "jeevanshevgan13@gmail.com") {
       return res.status(403).json({ error: "Access denied" });
     }
     
     try {
-      const users = getUsers();
+      const snapshot = await db.collection("users").get();
+      const users = snapshot.docs.map(doc => doc.data());
       res.json(users);
     } catch (e) {
       res.status(500).json({ error: "Failed to fetch users" });
@@ -223,14 +170,15 @@ async function startServer() {
   });
 
   // Export Feedback for Admin
-  app.get("/api/admin/export-feedback", authenticate, (req: any, res: any) => {
+  app.get("/api/admin/export-feedback", authenticate, async (req: any, res: any) => {
     // Only allow specific admin email
     if (req.user.email !== "jeevanshevgan13@gmail.com") {
       return res.status(403).json({ error: "Access denied" });
     }
 
     try {
-      const feedbacks = getFeedbacks();
+      const snapshot = await db.collection("feedback").get();
+      const feedbacks = snapshot.docs.map(doc => doc.data());
       res.json(feedbacks);
     } catch (e) {
       res.status(500).json({ error: "Failed to fetch feedback" });

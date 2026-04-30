@@ -5,7 +5,8 @@ import { auth } from "../lib/firebase";
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
-  updateProfile 
+  updateProfile,
+  sendPasswordResetEmail
 } from "firebase/auth";
 
 interface AuthScreenProps {
@@ -20,6 +21,26 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
   const [name, setName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const handleResetPassword = async () => {
+    if (!email) {
+      setError("Please enter your email address first.");
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setMessage("Password reset link sent! Check your inbox.");
+    } catch (err: any) {
+      console.error("Reset error:", err);
+      setError(err.message || "Failed to send reset email.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,6 +166,18 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
               />
             </div>
 
+            {mode === "login" && (
+              <div className="flex justify-end">
+                <button 
+                  type="button"
+                  onClick={handleResetPassword}
+                  className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline opacity-80 hover:opacity-100"
+                >
+                  Forgot Password?
+                </button>
+              </div>
+            )}
+
             <AnimatePresence>
               {error && (
                 <motion.div 
@@ -154,6 +187,16 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
                 >
                   <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                   <p className="text-xs font-bold text-red-500">{error}</p>
+                </motion.div>
+              )}
+              {message && (
+                <motion.div 
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="p-4 bg-green-500/10 border border-green-500/20 rounded-2xl flex items-center gap-3"
+                >
+                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                  <p className="text-xs font-bold text-green-500">{message}</p>
                 </motion.div>
               )}
             </AnimatePresence>
