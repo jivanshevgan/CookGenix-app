@@ -17,6 +17,12 @@ export interface Recipe {
   tips: string[];
   dishImagePrompt: string;
   mainImageUrl?: string; // Optional field to store generated URL
+  nutrition?: {
+    calories: number;
+    protein: string;
+    fat: string;
+    carbs: string;
+  };
 }
 
 export interface AnalysisResponse {
@@ -56,6 +62,55 @@ export async function generateRecipeImage(prompt: string): Promise<string> {
   }
 }
 
+export async function getIngredientSubstitute(ingredient: string, dishContext: string): Promise<string> {
+  const model = "gemini-1.5-flash-8b";
+  
+  const prompt = `You are a professional chef. A user is making "${dishContext}" but is missing the ingredient "${ingredient}". 
+  Provide one or two best possible substitutes available in an Indian kitchen. 
+  Keep the response very short (under 15 words) and helpful.
+  Format: "Try [Sub1] or [Sub2] because [Reason]."`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: {
+        parts: [{ text: prompt }]
+      }
+    });
+    return response.candidates?.[0]?.content?.parts?.[0]?.text || "Try skipping it or using a neutral oil/base.";
+  } catch (error) {
+    console.error("Substitution failed:", error);
+    return "Try skipping it or using a neutral oil/base.";
+  }
+}
+
+export async function customizeRecipe(recipe: Recipe, customRequest: string): Promise<Recipe> {
+  const model = "gemini-1.5-flash";
+
+  const prompt = `You are a professional chef. Take this recipe: ${JSON.stringify(recipe)}.
+  Modify it based on this request: "${customRequest}".
+  Return a NEW JSON object that follows the exact same Recipe schema.
+  Maintain the Hinglish tone. Ensure all fields (name, ingredients, steps, etc.) are updated to reflect the change.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: {
+        parts: [{ text: prompt }]
+      },
+      config: {
+        responseMimeType: "application/json"
+      }
+    });
+    const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error("No response from AI");
+    return JSON.parse(text);
+  } catch (error) {
+    console.error("Customization failed:", error);
+    throw error;
+  }
+}
+
 export async function analyzeFridgeImage(base64Image: string, mimeType: string): Promise<AnalysisResponse> {
   const model = "gemini-3-flash-preview";
 
@@ -76,8 +131,9 @@ export async function analyzeFridgeImage(base64Image: string, mimeType: string):
     8. Provide a 'dishImagePrompt': A descriptive prompt for a final plated shot of the dish.
     9. For each recipe, provide an estimated 'cookingTime' (e.g., '15 mins', '30 mins').
     10. For each recipe, provide 3-4 specific 'tips' (good advice, hacks, or flavor boosters).
-    11. Provide a creative general 'Chef's Tip' at the end.
-    12. Tone: Professional, slightly witty, and very helpful.
+    11. MANDATORY NUTRITION: provide 'nutrition' with 'calories' (number), 'protein' (e.g., "12g"), 'fat' (e.g., "8g"), 'carbs' (e.g., "25g").
+    12. Provide a creative general 'Chef's Tip' at the end.
+    13. Tone: Professional, slightly witty, and very helpful.
   `;
 
   const responseSchema = {
@@ -110,9 +166,19 @@ export async function analyzeFridgeImage(base64Image: string, mimeType: string):
             },
             dishImagePrompt: { type: Type.STRING, description: "Image prompt for the final dish." },
             cookingTime: { type: Type.STRING, description: "Est. time (e.g. 20 mins)." },
-            tips: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Detailed point-wise pro tips for this specific recipe." }
+            tips: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Detailed point-wise pro tips for this specific recipe." },
+            nutrition: {
+              type: Type.OBJECT,
+              properties: {
+                calories: { type: Type.NUMBER },
+                protein: { type: Type.STRING },
+                fat: { type: Type.STRING },
+                carbs: { type: Type.STRING }
+              },
+              required: ["calories", "protein", "fat", "carbs"]
+            }
           },
-          required: ["name", "type", "ingredients", "method", "steps", "dishImagePrompt", "cookingTime", "tips"]
+          required: ["name", "type", "ingredients", "method", "steps", "dishImagePrompt", "cookingTime", "tips", "nutrition"]
         }
       },
       chefsTip: { type: Type.STRING, description: "Witty chef's tip." }
@@ -150,12 +216,15 @@ export async function analyzeFridgeImage(base64Image: string, mimeType: string):
   }
 }
 
-export async function analyzeIngredientsText(text: string): Promise<AnalysisResponse> {
+export async function analyzeIngredientsText(text: string, goal?: string): Promise<AnalysisResponse> {
   const model = "gemini-3-flash-preview";
+
+  const goalInstruction = goal ? `The user's dietary goal is: ${goal}. Ensure recipes are optimized for this goal (e.g., higher protein for 'Muscle Gain', lower calories/carbs for 'Weight Loss').` : "";
 
   const systemInstruction = `
     You are an expert Culinary AI with a deep understanding of both Indian and International cuisines.
     You will receive a list of ingredients or a description of what is available.
+    ${goalInstruction}
     1. Identify all mentioned ingredients clearly.
     2. Suggest 5 distinct recipes. Provide a mix of:
        - Authentic Indian dishes (Poha, Dal, Sabzi, Roti, etc.)
@@ -170,8 +239,9 @@ export async function analyzeIngredientsText(text: string): Promise<AnalysisResp
     8. Provide a 'dishImagePrompt': A descriptive prompt for a final plated shot of the dish.
     9. For each recipe, provide an estimated 'cookingTime' (e.g., '15 mins', '30 mins').
     10. For each recipe, provide 3-4 specific 'tips'.
-    11. Provide a creative general 'Chef's Tip' at the end.
-    12. Tone: Professional, slightly witty, and very helpful.
+    11. MANDATORY NUTRITION: provide 'nutrition' with 'calories' (number), 'protein' (e.g., "12g"), 'fat' (e.g., "8g"), 'carbs' (e.g., "25g").
+    12. Provide a creative general 'Chef's Tip' at the end.
+    13. Tone: Professional, slightly witty, and very helpful.
   `;
 
   const responseSchema = {
@@ -204,9 +274,19 @@ export async function analyzeIngredientsText(text: string): Promise<AnalysisResp
             },
             dishImagePrompt: { type: Type.STRING, description: "Image prompt for the final dish." },
             cookingTime: { type: Type.STRING, description: "Est. time (e.g. 20 mins)." },
-            tips: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Detailed point-wise pro tips for this specific recipe." }
+            tips: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Detailed point-wise pro tips for this specific recipe." },
+            nutrition: {
+              type: Type.OBJECT,
+              properties: {
+                calories: { type: Type.NUMBER },
+                protein: { type: Type.STRING },
+                fat: { type: Type.STRING },
+                carbs: { type: Type.STRING }
+              },
+              required: ["calories", "protein", "fat", "carbs"]
+            }
           },
-          required: ["name", "type", "ingredients", "method", "steps", "dishImagePrompt", "cookingTime", "tips"]
+          required: ["name", "type", "ingredients", "method", "steps", "dishImagePrompt", "cookingTime", "tips", "nutrition"]
         }
       },
       chefsTip: { type: Type.STRING, description: "Witty chef's tip." }

@@ -11,6 +11,8 @@ import {
   analyzeFridgeImage, 
   analyzeIngredientsText, 
   generateRecipeImage,
+  getIngredientSubstitute,
+  customizeRecipe,
   type AnalysisResponse, 
   type Recipe,
   type RecipeStep
@@ -32,6 +34,30 @@ export default function App() {
   const [adminData, setAdminData] = useState<{ users: any[], feedback: any[] } | null>(null);
   const [loadingAdmin, setLoadingAdmin] = useState(false);
   const [showRatingModal, setShowRatingModal] = useState(false);
+  const [dietaryGoal, setDietaryGoal] = useState<string>("Balanced");
+
+  const DIETARY_GOALS = [
+    { name: "Balanced", icon: <UtensilsCrossed size={14} />, desc: "Wholesome meals" },
+    { name: "Weight Loss", icon: <ChevronRight size={14} className="-rotate-90" />, desc: "Low calorie options" },
+    { name: "Muscle Gain", icon: <Plus size={14} />, desc: "High protein focus" }
+  ];
+
+  const handleQuickCookNow = async () => {
+    setIsAnalyzing(true);
+    setError(null);
+    try {
+      // If we have an image, use it, otherwise use a generic 'fridge ingredients' prompt
+      const prompt = image ? "suggest something and cook it now" : "suggest a quick recipe with common fridge items like vegetables, eggs, and milk";
+      const data = await analyzeIngredientsText(prompt, dietaryGoal);
+      setResult(data);
+      setTimeout(() => setShowRatingModal(true), 1500);
+    } catch (err) {
+      console.error(err);
+      setError("AI was too busy cooking! Please try again.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   const isAdmin = user?.email === "jeevanshevgan13@gmail.com";
 
@@ -129,7 +155,7 @@ export default function App() {
     setIsAnalyzing(true);
     setError(null);
     try {
-      const data = await analyzeIngredientsText(transcript);
+      const data = await analyzeIngredientsText(transcript, dietaryGoal);
       setResult(data);
       setTimeout(() => setShowRatingModal(true), 1500);
     } catch (err) {
@@ -343,6 +369,8 @@ export default function App() {
     try {
       const [mimeTypePart, base64Data] = image.split(",");
       const mimeType = mimeTypePart.match(/:(.*?);/)?.[1] || "image/jpeg";
+      // analyzeFridgeImage doesn't take goal yet, let's just use text analysis for goals for now if needed or 
+      // we could update fridge image too. For simplicity, let's focus text/voice/quick for now.
       const data = await analyzeFridgeImage(base64Data, mimeType);
       setResult(data);
       // Trigger rating modal after a short delay
@@ -712,6 +740,48 @@ export default function App() {
               </motion.div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center px-4">
+                {/* Diet Selection */}
+                <div className="sm:col-span-3 mb-6 flex flex-col items-center gap-4">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">Choose AI Goal</p>
+                  <div className="flex flex-wrap justify-center gap-3">
+                    {DIETARY_GOALS.map((goal) => (
+                      <button
+                        key={goal.name}
+                        onClick={() => setDietaryGoal(goal.name)}
+                        className={`px-6 py-3 rounded-full border-2 transition-all flex items-center gap-3 ${
+                          dietaryGoal === goal.name 
+                            ? 'bg-primary border-primary text-white shadow-lg scale-105' 
+                            : (isDarkMode ? 'bg-white/5 border-white/10 hover:border-primary/50' : 'bg-white border-gray-100 hover:border-primary/50')
+                        }`}
+                      >
+                        <span className={dietaryGoal === goal.name ? 'text-white' : 'text-primary'}>{goal.icon}</span>
+                        <div className="text-left">
+                          <p className="text-xs font-black leading-none">{goal.name}</p>
+                          <p className={`text-[8px] font-bold uppercase opacity-50 ${dietaryGoal === goal.name ? 'text-white' : ''}`}>{goal.desc}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="sm:col-span-3 flex justify-center mb-8">
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={handleQuickCookNow}
+                    disabled={isAnalyzing}
+                    className="group relative px-10 py-5 bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-[24px] font-black shadow-[0_15px_40px_rgba(249,115,22,0.3)] flex items-center gap-4 uppercase tracking-wider overflow-hidden"
+                  >
+                    <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500" />
+                    <span className="text-2xl">🔥</span>
+                    <div className="text-left">
+                      <p className="text-sm leading-none">Quick Cook</p>
+                      <p className="text-[9px] opacity-70">What can I cook now?</p>
+                    </div>
+                    <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                  </motion.button>
+                </div>
+
                 {/* Visual Native Camera Integration */}
                 <div className="relative group">
                   <input 
@@ -1038,16 +1108,21 @@ function CaptureCard({ title, desc, icon, onClick, primary, isDarkMode }: any) {
   );
 }
 
-function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any) {
+function RecipeCard({ recipe: initialRecipe, isDarkMode, isFavorite, onFavorite, onShare }: any) {
+  const [recipe, setRecipe] = useState(initialRecipe);
   const [isOpen, setIsOpen] = useState(false);
   const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
+  const [customRequest, setCustomRequest] = useState("");
+  const [isCustomizing, setIsCustomizing] = useState(false);
+  const [substitutes, setSubstitutes] = useState<Record<string, string>>({});
+  const [loadingSubs, setLoadingSubs] = useState<Record<string, boolean>>({});
+  const [mainImageUrl, setMainImageUrl] = useState<string | null>(recipe.mainImageUrl || null);
+  const [isGeneratingMain, setIsGeneratingMain] = useState(false);
 
   const displaySteps = useMemo(() => {
     if (recipe.steps && recipe.steps.length > 0) return recipe.steps;
     
-    // Fallback: Parse method string into steps if possible
     if (recipe.method) {
-      // Split by numbers like '1.', '2.' or newlines
       const lines = recipe.method
         .split(/\d+\.|\n/)
         .map((l: string) => l.trim())
@@ -1072,6 +1147,52 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
     }
     setCompletedSteps(newSteps);
   };
+
+  const handleCustomize = async () => {
+    if (!customRequest.trim() || isCustomizing) return;
+    setIsCustomizing(true);
+    try {
+      const newRecipe = await customizeRecipe(recipe, customRequest);
+      setRecipe(newRecipe);
+      setCustomRequest("");
+      setCompletedSteps(new Set());
+    } catch (e) {
+      console.error("Customization failed", e);
+    } finally {
+      setIsCustomizing(false);
+    }
+  };
+
+  const handleGetSubstitute = async (ingredient: string) => {
+    if (loadingSubs[ingredient] || substitutes[ingredient]) return;
+    
+    setLoadingSubs(prev => ({ ...prev, [ingredient]: true }));
+    try {
+      const sub = await getIngredientSubstitute(ingredient, recipe.name);
+      setSubstitutes(prev => ({ ...prev, [ingredient]: sub }));
+    } catch (e) {
+      console.error("Sub failed", e);
+    } finally {
+      setLoadingSubs(prev => ({ ...prev, [ingredient]: false }));
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && !mainImageUrl && recipe.dishImagePrompt && !isGeneratingMain) {
+      const loadMainImage = async () => {
+        setIsGeneratingMain(true);
+        try {
+          const url = await generateRecipeImage(recipe.dishImagePrompt);
+          setMainImageUrl(url);
+        } catch (e) {
+          console.error("Main image failed", e);
+        } finally {
+          setIsGeneratingMain(false);
+        }
+      };
+      loadMainImage();
+    }
+  }, [isOpen, recipe.dishImagePrompt, mainImageUrl, isGeneratingMain]);
   
   return (
     <motion.div
@@ -1080,6 +1201,31 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
       viewport={{ once: true }}
       className={`rounded-[32px] overflow-hidden border-2 transition-all duration-300 ${isDarkMode ? 'bg-white/5 border-white/5' : 'bg-white border-gray-100 shadow-xl'}`}
     >
+      {/* Featured Dish Image */}
+      {isOpen && (
+        <div className="relative h-48 md:h-64 bg-black/5 dark:bg-white/5 overflow-hidden">
+          {mainImageUrl ? (
+            <motion.img 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              src={mainImageUrl} 
+              alt={recipe.name} 
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          ) : isGeneratingMain ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+              <Sparkles className="text-primary animate-pulse" size={24} />
+              <span className="text-[10px] font-black uppercase tracking-widest opacity-40">Styling the dish...</span>
+            </div>
+          ) : null}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+          <div className="absolute bottom-6 left-8">
+            <h3 className="text-2xl font-black text-white leading-tight">{recipe.name}</h3>
+          </div>
+        </div>
+      )}
+
       <div className="p-8">
         {!isOpen && (
           <div className="flex justify-between items-start mb-6">
@@ -1134,26 +1280,87 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
            </div>
         )}
 
-        {!isOpen && (
-          <div className="flex items-center gap-3 mb-2">
-            <h3 className="text-2xl font-black leading-tight">{recipe.name}</h3>
-            {isFavorite && (
-              <motion.span 
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                className="bg-primary/20 text-primary text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1"
-              >
-                <CheckCircle2 size={10} /> SAVED
-              </motion.span>
+        {(!isOpen || isCustomizing) && (
+          <div className="flex flex-col gap-2 mb-2">
+            <div className="flex items-center gap-3">
+              <h3 className="text-2xl font-black leading-tight">{recipe.name}</h3>
+              {isFavorite && (
+                <motion.span 
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  className="bg-primary/20 text-primary text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1"
+                >
+                  <CheckCircle2 size={10} /> SAVED
+                </motion.span>
+              )}
+            </div>
+            
+            {recipe.nutrition && (
+              <div className="flex flex-wrap gap-2">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400 text-[10px] font-black">
+                  <Star size={10} className="fill-orange-500" /> {recipe.nutrition.calories} kcal
+                </div>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[10px] font-black">
+                  <UserIcon size={10} /> {recipe.nutrition.protein} Protein
+                </div>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-green-500/10 text-green-600 dark:text-green-400 text-[10px] font-black">
+                  <UtensilsCrossed size={10} /> {recipe.nutrition.carbs} Carbs
+                </div>
+              </div>
+            )}
+
+            {isCustomizing && (
+               <div className="flex items-center gap-2 text-primary animate-pulse mt-1">
+                 <RefreshCcw size={14} className="animate-spin" />
+                 <span className="text-[10px] font-black uppercase">Tailoring...</span>
+               </div>
             )}
           </div>
         )}
         
-        <div className="space-y-2 mb-8">
-          <p className="text-[10px] font-black text-primary uppercase tracking-widest">Key Ingredients</p>
-          <p className="text-sm font-semibold opacity-60 leading-relaxed">
-            {recipe.ingredients.join(" • ")}
-          </p>
+        <div className="space-y-4 mb-8">
+          <p className="text-[10px] font-black text-primary uppercase tracking-widest">Ingredients</p>
+          <div className="flex flex-wrap gap-2">
+            {recipe.ingredients.map((ing: string, i: number) => (
+              <div key={i} className="group relative">
+                <button 
+                  onClick={() => handleGetSubstitute(ing)}
+                  className={`px-3 py-1.5 rounded-xl border-2 text-xs font-bold transition-all flex items-center gap-2 ${
+                    substitutes[ing] 
+                      ? 'bg-primary border-primary text-white shadow-lg' 
+                      : (isDarkMode ? 'bg-white/5 border-white/10 hover:border-primary/50' : 'bg-gray-50 border-gray-100 hover:border-primary/50')
+                  }`}
+                >
+                  {ing}
+                  {loadingSubs[ing] ? (
+                    <RefreshCcw size={10} className="animate-spin" />
+                  ) : substitutes[ing] ? (
+                    <Info size={10} />
+                  ) : (
+                    <Plus size={10} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                  )}
+                </button>
+                <AnimatePresence>
+                  {substitutes[ing] && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10, scale: 0.9 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                      className="absolute bottom-full left-0 mb-2 w-48 p-3 rounded-2xl bg-primary text-white text-[10px] font-bold shadow-2xl z-50 leading-relaxed"
+                    >
+                      <div className="flex justify-between items-start gap-2 mb-1">
+                        <span className="uppercase tracking-widest opacity-80">Substitute</span>
+                        <button onClick={(e) => { e.stopPropagation(); setSubstitutes(prev => { const n = {...prev}; delete n[ing]; return n; })}}>
+                          <X size={10} />
+                        </button>
+                      </div>
+                      {substitutes[ing]}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            ))}
+          </div>
         </div>
 
         <button 
@@ -1173,6 +1380,31 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
               className="overflow-hidden"
             >
               <div className="pt-8 border-t border-white/10 mt-6 space-y-12">
+                {/* Customizer Section */}
+                <div className="p-6 rounded-[28px] bg-white/5 border-2 border-primary/20 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="text-primary" size={16} />
+                    <p className="text-[10px] font-black text-primary uppercase tracking-widest">AI Customizer</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input 
+                      type="text"
+                      value={customRequest}
+                      onChange={(e) => setCustomRequest(e.target.value)}
+                      placeholder="e.g., Make it vegan or spicier..."
+                      className="flex-1 bg-transparent border-b-2 border-white/10 py-2 text-sm font-bold focus:border-primary outline-none transition-colors"
+                      onKeyDown={(e) => e.key === 'Enter' && handleCustomize()}
+                    />
+                    <button 
+                      onClick={handleCustomize}
+                      disabled={isCustomizing || !customRequest.trim()}
+                      className="p-2 bg-primary text-white rounded-xl shadow-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:scale-100"
+                    >
+                      <ChevronRight size={20} />
+                    </button>
+                  </div>
+                </div>
+
                 {/* Step-by-Step Guide */}
                 <div className="space-y-6">
                   <p className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-2">
@@ -1189,11 +1421,6 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
                         onToggle={() => toggleStep(i)}
                       />
                     ))}
-                    {displaySteps.length === 0 && (
-                       <p className="text-sm leading-[1.8] font-medium opacity-80 whitespace-pre-line italic">
-                          {recipe.method}
-                       </p>
-                    )}
                   </div>
                 </div>
 
