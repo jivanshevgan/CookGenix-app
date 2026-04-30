@@ -8,6 +8,8 @@ export interface RecipeStep {
 }
 
 export interface Recipe {
+  id?: string;
+  user_id?: string;
   name: string;
   type: string;
   ingredients: string[];

@@ -18,7 +18,20 @@ import {
   type RecipeStep
 } from "./lib/gemini";
 import { AuthScreen } from "./components/AuthScreen";
-import { auth } from "./lib/firebase";
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  addDoc, 
+  deleteDoc, 
+  doc, 
+  getDocs,
+  setDoc,
+  updateDoc,
+  serverTimestamp
+} from "firebase/firestore";
+import { db, auth } from "./lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 
 export default function App() {
@@ -111,7 +124,7 @@ export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [isSpeechSupported, setIsSpeechSupported] = useState(false);
-  const hasFetchedCloud = useRef(false);
+  const [recipesLoading, setRecipesLoading] = useState(false);
 
   const recognitionRef = useRef<any>(null);
 
@@ -203,10 +216,10 @@ export default function App() {
     }
   };
 
-  // Load preferences and session on mount
+  // Authentication and Real-time Data Sync
   useEffect(() => {
     try {
-      const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
         if (firebaseUser) {
           setUser({
             uid: firebaseUser.uid,
@@ -214,54 +227,18 @@ export default function App() {
             name: firebaseUser.displayName || firebaseUser.email
           });
           setAuthStatus("authenticated");
-
-          // Load UID-scoped favorites from localStorage for immediate UI feedback
-          const scopedKey = `cookgenix_favorites_${firebaseUser.uid}`;
-          const savedScoped = localStorage.getItem(scopedKey);
-          if (savedScoped) {
-            try {
-              setFavorites(JSON.parse(savedScoped));
-            } catch (e) {
-              console.error("Failed to load scoped favorites", e);
-            }
-          }
-
-          // Fetch fresh favorites from backend to stay in sync
-          try {
-            const token = await firebaseUser.getIdToken();
-            const response = await fetch(`${window.location.origin}/api/favorites`, {
-              headers: { "Authorization": `Bearer ${token}` }
-            });
-            if (response.ok) {
-              const data = await response.json();
-              if (data.favorites) {
-                setFavorites(data.favorites);
-                // Also update scoped localStorage
-                localStorage.setItem(scopedKey, JSON.stringify(data.favorites));
-              }
-            }
-          } catch (err) {
-            console.error("Failed to sync session", err);
-          } finally {
-            hasFetchedCloud.current = true;
-          }
         } else {
           setUser(null);
           setAuthStatus("unauthenticated");
-          setFavorites([]); // Clear favorites
-          setResult(null); // Clear last recipe results
-          setImage(null); // Clear last uploaded image
-          setView("home"); // Reset view
-          setAdminData(null); // Clear admin data
-          hasFetchedCloud.current = false;
+          setFavorites([]);
+          setResult(null);
+          setImage(null);
+          setView("home");
+          setAdminData(null);
         }
       });
       
-      // Check dark mode preference
-      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        setIsDarkMode(true);
-      }
-      
+      // Load dark mode preference
       try {
         const savedDarkMode = localStorage.getItem("darkMode");
         if (savedDarkMode !== null) {
@@ -269,59 +246,84 @@ export default function App() {
           if (savedDarkMode === "true") {
             document.documentElement.classList.add("dark");
           }
+        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          setIsDarkMode(true);
+          document.documentElement.classList.add("dark");
         }
       } catch (e) {
         console.warn("localStorage not accessible", e);
       }
 
-      return () => unsubscribe();
+      return () => unsubscribeAuth();
     } catch (e) {
-      console.error("Auth initialization effect failed:", e);
-      setAuthStatus("unauthenticated"); // Fallback
+      console.error("Auth initialization failed:", e);
+      setAuthStatus("unauthenticated");
     }
   }, []);
 
-  // Sync favorites to backend
+  // Dedicated Real-time Recipes Listener
   useEffect(() => {
-    const syncFavorites = async () => {
-      // PREVENT OVERWRITE: Only sync if authenticated AND we have successfully fetched the cloud state once
-      if (authStatus !== "authenticated" || !auth.currentUser || !hasFetchedCloud.current) return;
-      
-      try {
-        const token = await auth.currentUser.getIdToken();
-        await fetch(`${window.location.origin}/api/favorites`, {
-          method: "POST",
-          headers: { 
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
-          body: JSON.stringify({ favorites })
-        });
-      } catch (err) {
-        console.error("Failed to sync favorites with server", err);
-      }
-    };
+    if (authStatus !== "authenticated" || !user?.uid) return;
 
-    const scopedKey = auth.currentUser ? `cookgenix_favorites_${auth.currentUser.uid}` : null;
-    if (scopedKey && hasFetchedCloud.current) {
+    setRecipesLoading(true);
+    const q = query(collection(db, "recipes"), where("user_id", "==", user.uid));
+    
+    const unsubscribeRecipes = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data() 
+      } as Recipe));
+      
+      setFavorites(docs);
+      setRecipesLoading(false);
+      
+      // Update local storage for immediate future loads if needed (offline support)
       try {
-        localStorage.setItem(scopedKey, JSON.stringify(favorites));
+        localStorage.setItem(`cookgenix_favorites_${user.uid}`, JSON.stringify(docs));
       } catch (e) {
-        console.warn("Failed to save to localStorage", e);
+        console.warn("Local storage update failed", e);
       }
-    }
-    syncFavorites();
-  }, [favorites, authStatus]);
+    }, (err) => {
+      console.error("Recipes sync failed:", err);
+      setRecipesLoading(false);
+    });
+
+    return () => unsubscribeRecipes();
+  }, [authStatus, user?.uid]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const toggleFavorite = (recipe: Recipe) => {
-    const isFav = favorites.some(fav => fav.name.trim().toLowerCase() === recipe.name.trim().toLowerCase());
+  const toggleFavorite = async (recipe: Recipe) => {
+    if (!user?.uid) return;
     
-    if (isFav) {
-      setFavorites(favorites.filter(fav => fav.name.trim().toLowerCase() !== recipe.name.trim().toLowerCase()));
-    } else {
-      setFavorites([...favorites, { ...recipe, savedAt: new Date().toISOString() }]);
+    // Check if favorite by ID or Name
+    const existingRecipe = favorites.find(fav => 
+      (fav.id && recipe.id && fav.id === recipe.id) || 
+      (fav.name.trim().toLowerCase() === recipe.name.trim().toLowerCase())
+    );
+    
+    try {
+      if (existingRecipe && existingRecipe.id) {
+        // Remove from Firestore
+        await deleteDoc(doc(db, "recipes", existingRecipe.id));
+      } else {
+        // Add to Firestore
+        const recipeToSave = {
+          ...recipe,
+          user_id: user.uid,
+          savedAt: new Date().toISOString(),
+          updatedAt: serverTimestamp()
+        };
+        // Clean up undefined fields for Firestore
+        Object.keys(recipeToSave).forEach(key => {
+          if ((recipeToSave as any)[key] === undefined) delete (recipeToSave as any)[key];
+        });
+        
+        await addDoc(collection(db, "recipes"), recipeToSave);
+      }
+    } catch (err) {
+      console.error("Failed to toggle favorite:", err);
+      setError("Arre! Failed to save your recipe. Please check your connection.");
     }
   };
 
@@ -405,21 +407,16 @@ export default function App() {
   };
 
   const submitRating = async () => {
-    if (userRating === 0 || !auth.currentUser) return;
+    if (userRating === 0 || !user?.uid) return;
     setRatingSubmitting(true);
     
     try {
-      const token = await auth.currentUser.getIdToken();
-      await fetch(`${window.location.origin}/api/feedback`, {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ 
-          rating: userRating, 
-          message: feedback 
-        })
+      await addDoc(collection(db, "feedback"), {
+        user_id: user.uid,
+        email: user.email,
+        rating: userRating,
+        message: feedback,
+        timestamp: new Date().toISOString()
       });
       
       alert("Dhanyawaad! Your feedback has been saved to our database.");
@@ -428,7 +425,7 @@ export default function App() {
       setFeedback("");
     } catch (err) {
       console.error("Failed to save feedback", err);
-      alert("Arre! Something went wrong while saving your feedback.");
+      setError("Arre! Something went wrong while saving your feedback.");
     } finally {
       setRatingSubmitting(false);
     }
