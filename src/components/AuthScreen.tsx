@@ -58,8 +58,6 @@ export function AuthScreen({ onAuthSuccess, isDarkMode }: AuthScreenProps) {
 
   return (
     <div className={`min-h-screen flex items-center justify-center p-6 ${isDarkMode ? 'bg-bg-dark text-white' : 'bg-bg-light text-gray-900'}`}>
-      {/* Debug Info (Only in console) */}
-      <script dangerouslySetInnerHTML={{ __html: `console.log("API Base:", window.location.origin);` }} />
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/10 rounded-full blur-[120px]" />
         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-primary/10 rounded-full blur-[120px]" />

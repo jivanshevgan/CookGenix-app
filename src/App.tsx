@@ -65,32 +65,36 @@ export default function App() {
 
   // Initialize Speech Recognition
   useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'en-IN'; // Optimized for Indian English
+    try {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        recognitionRef.current = new SpeechRecognition();
+        recognitionRef.current.continuous = true;
+        recognitionRef.current.interimResults = true;
+        recognitionRef.current.lang = 'en-IN'; // Optimized for Indian English
 
-      recognitionRef.current.onresult = (event: any) => {
-        let currentTranscript = "";
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          currentTranscript += event.results[i][0].transcript;
-        }
-        setTranscript(currentTranscript);
-      };
+        recognitionRef.current.onresult = (event: any) => {
+          let currentTranscript = "";
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            currentTranscript += event.results[i][0].transcript;
+          }
+          setTranscript(currentTranscript);
+        };
 
-      recognitionRef.current.onerror = (event: any) => {
-        console.error("Speech Recognition Error", event.error);
-        setIsListening(false);
-        if (event.error === 'not-allowed') {
-          setError("Microphone permission denied. Please enable it in browser settings.");
-        }
-      };
+        recognitionRef.current.onerror = (event: any) => {
+          console.error("Speech Recognition Error", event.error);
+          setIsListening(false);
+          if (event.error === 'not-allowed') {
+            setError("Microphone permission denied. Please enable it in browser settings.");
+          }
+        };
 
-      recognitionRef.current.onend = () => {
-        setIsListening(false);
-      };
+        recognitionRef.current.onend = () => {
+          setIsListening(false);
+        };
+      }
+    } catch (e) {
+      console.error("Speech Recognition initialization failed:", e);
     }
   }, []);
 
@@ -148,62 +152,67 @@ export default function App() {
 
   // Load preferences and session on mount
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        setUser({
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          name: firebaseUser.displayName || firebaseUser.email
-        });
-        setAuthStatus("authenticated");
-
-        // Fetch favorites from backend
-        try {
-          const token = await firebaseUser.getIdToken();
-          // First, "Ping" the server to ensure user is tracked/created
-          await fetch(`${window.location.origin}/api/auth/ping`, {
-            headers: { "Authorization": `Bearer ${token}` }
+    try {
+      const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        if (firebaseUser) {
+          setUser({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            name: firebaseUser.displayName || firebaseUser.email
           });
+          setAuthStatus("authenticated");
 
-          const response = await fetch(`${window.location.origin}/api/favorites`, {
-            headers: { "Authorization": `Bearer ${token}` }
-          });
-          if (response.ok) {
-            const data = await response.json();
-            if (data.favorites) setFavorites(data.favorites);
+          // Fetch favorites from backend
+          try {
+            const token = await firebaseUser.getIdToken();
+            // First, "Ping" the server to ensure user is tracked/created
+            await fetch(`${window.location.origin}/api/auth/ping`, {
+              headers: { "Authorization": `Bearer ${token}` }
+            });
+
+            const response = await fetch(`${window.location.origin}/api/favorites`, {
+              headers: { "Authorization": `Bearer ${token}` }
+            });
+            if (response.ok) {
+              const data = await response.json();
+              if (data.favorites) setFavorites(data.favorites);
+            }
+          } catch (err) {
+            console.error("Failed to sync session", err);
           }
-        } catch (err) {
-          console.error("Failed to sync session", err);
+        } else {
+          setUser(null);
+          setAuthStatus("unauthenticated");
         }
-      } else {
-        setUser(null);
-        setAuthStatus("unauthenticated");
-      }
-    });
+      });
 
-    const saved = localStorage.getItem("cookgenix_favorites");
-    if (saved) {
-      try {
-        setFavorites(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to load favorites", e);
+      const saved = localStorage.getItem("cookgenix_favorites");
+      if (saved) {
+        try {
+          setFavorites(JSON.parse(saved));
+        } catch (e) {
+          console.error("Failed to load favorites", e);
+        }
       }
-    }
-    
-    // Check dark mode preference
-    if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      setIsDarkMode(true);
-    }
-    
-    const savedDarkMode = localStorage.getItem("darkMode");
-    if (savedDarkMode !== null) {
-      setIsDarkMode(savedDarkMode === "true");
-      if (savedDarkMode === "true") {
-        document.documentElement.classList.add("dark");
+      
+      // Check dark mode preference
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        setIsDarkMode(true);
       }
-    }
+      
+      const savedDarkMode = localStorage.getItem("darkMode");
+      if (savedDarkMode !== null) {
+        setIsDarkMode(savedDarkMode === "true");
+        if (savedDarkMode === "true") {
+          document.documentElement.classList.add("dark");
+        }
+      }
 
-    return () => unsubscribe();
+      return () => unsubscribe();
+    } catch (e) {
+      console.error("Auth initialization effect failed:", e);
+      setAuthStatus("unauthenticated"); // Fallback
+    }
   }, []);
 
   // Sync favorites to backend
