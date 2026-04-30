@@ -1,4 +1,4 @@
-import { useState, useRef, type ChangeEvent, useEffect } from "react";
+import { useState, useRef, type ChangeEvent, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Camera, ChefHat, Sparkles, UtensilsCrossed, RefreshCcw, 
@@ -1040,9 +1040,30 @@ function CaptureCard({ title, desc, icon, onClick, primary, isDarkMode }: any) {
 
 function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any) {
   const [isOpen, setIsOpen] = useState(false);
+  const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
   const [mainImageUrl, setMainImageUrl] = useState<string | null>(recipe.mainImageUrl || null);
   const [isGeneratingMain, setIsGeneratingMain] = useState(false);
-  const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
+
+  const displaySteps = useMemo(() => {
+    if (recipe.steps && recipe.steps.length > 0) return recipe.steps;
+    
+    // Fallback: Parse method string into steps if possible
+    if (recipe.method) {
+      // Split by numbers like '1.', '2.' or newlines
+      const lines = recipe.method
+        .split(/\d+\.|\n/)
+        .map((l: string) => l.trim())
+        .filter((l: string) => l.length > 5);
+        
+      if (lines.length > 0) {
+        return lines.map((line: string) => ({
+          text: line,
+          visualPrompt: `Detailed cooking step: ${line.substring(0, 80)}... culinary photography, photorealistic`
+        }));
+      }
+    }
+    return [];
+  }, [recipe]);
 
   const toggleStep = (index: number) => {
     const newSteps = new Set(completedSteps);
@@ -1203,7 +1224,7 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
                     <ImageIcon size={12} /> Step-by-Step Visual Guide
                   </p>
                   <div className="space-y-10">
-                    {(recipe.steps || []).map((step: RecipeStep, i: number) => (
+                    {displaySteps.map((step: RecipeStep, i: number) => (
                       <StepWithVisual 
                         key={i} 
                         step={step} 
@@ -1213,7 +1234,7 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
                         onToggle={() => toggleStep(i)}
                       />
                     ))}
-                    {!recipe.steps && (
+                    {displaySteps.length === 0 && (
                        <p className="text-sm leading-[1.8] font-medium opacity-80 whitespace-pre-line italic">
                           {recipe.method}
                        </p>

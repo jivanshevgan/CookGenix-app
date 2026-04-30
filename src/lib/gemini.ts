@@ -71,7 +71,7 @@ export async function analyzeFridgeImage(base64Image: string, mimeType: string):
     5. Language for names and methods: Hinglish (Hindi words in English script for a friendly Indian tone).
     6. Provide a detailed 'method' string (as before) AND a 'steps' array.
     7. Each entry in 'steps' must have:
-       - 'text': The instruction for that step.
+       - 'text': The instruction for that step. Be VERY detailed and descriptive. Aim for at least 7-10 steps for a comprehensive guide.
        - 'visualPrompt': A highly descriptive, photorealistic prompt for an image generator showing this specific cooking step (e.g., "A close-up shot of chopped onions being sautéed in a steel pan with golden oil, steam rising, warm kitchen lighting").
     8. Provide a 'dishImagePrompt': A descriptive prompt for a final plated shot of the dish.
     9. For each recipe, provide an estimated 'cookingTime' (e.g., '15 mins', '30 mins').
@@ -165,7 +165,7 @@ export async function analyzeIngredientsText(text: string): Promise<AnalysisResp
     5. Language for names and methods: Hinglish (Hindi words in English script for a friendly Indian tone).
     6. Provide a detailed 'method' string AND a 'steps' array.
     7. Each entry in 'steps' must have:
-       - 'text': The instruction for that step.
+       - 'text': The instruction for that step. Be VERY detailed and descriptive. Aim for at least 7-10 steps for a comprehensive guide.
        - 'visualPrompt': A highly descriptive, photorealistic prompt for an image generator (e.g., "A clean wooden board with freshly chopped vibrant vegetables and a sharp knife, natural window light").
     8. Provide a 'dishImagePrompt': A descriptive prompt for a final plated shot of the dish.
     9. For each recipe, provide an estimated 'cookingTime' (e.g., '15 mins', '30 mins').
