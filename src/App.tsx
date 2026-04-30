@@ -823,7 +823,7 @@ export default function App() {
 
                 {/* Diet Selection - Moved to Bottom */}
                 <div className="sm:col-span-3 mt-8 mb-6 flex flex-col items-center gap-4 pt-8 border-t border-black/5 dark:border-white/5">
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">Choose AI Goal</p>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">Select Diet & Nutrition Goal</p>
                   <div className="flex flex-wrap justify-center gap-3">
                     {DIETARY_GOALS.map((goal) => (
                       <button
@@ -934,10 +934,37 @@ export default function App() {
           ) : (
             <motion.div
               key="process"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
               className="space-y-12"
             >
+              {/* Goal Insight Dashboard - Visible only when results are present */}
+              {result && (
+                <div className="bg-primary/5 rounded-[40px] p-8 border-2 border-primary/10 backdrop-blur-sm">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                    <div className="flex items-center gap-6">
+                      <div className="w-16 h-16 rounded-3xl bg-primary/20 flex items-center justify-center text-primary shrink-0">
+                        {DIETARY_GOALS.find(g => g.name === dietaryGoal)?.icon}
+                      </div>
+                      <div>
+                        <h2 className="text-xl font-black">{dietaryGoal} Plan</h2>
+                        <p className="text-xs font-bold uppercase opacity-50 tracking-widest mt-1">AI Curated Nutrition</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-4">
+                      <div className="px-5 py-3 rounded-2xl bg-white dark:bg-white/5 border border-black/5 dark:border-white/5">
+                        <p className="text-[8px] font-black uppercase opacity-40 mb-1">Avg. Protein</p>
+                        <p className="text-lg font-black text-primary">{dietaryGoal === 'Muscle Gain' ? 'High (25g+)' : 'Moderate'}</p>
+                      </div>
+                      <div className="px-5 py-3 rounded-2xl bg-white dark:bg-white/5 border border-black/5 dark:border-white/5">
+                        <p className="text-[8px] font-black uppercase opacity-40 mb-1">Calorie Focus</p>
+                        <p className="text-lg font-black text-primary">{dietaryGoal === 'Weight Loss' ? 'Deficit (300-500)' : 'Balanced'}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Image Preview Card */}
               {image && (
                 <div className="relative group">
@@ -1282,6 +1309,11 @@ function RecipeCard({ recipe: initialRecipe, isDarkMode, isFavorite, onFavorite,
               <span className="text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-primary/80 text-white backdrop-blur-sm">
                 {recipe.type}
               </span>
+              {recipe.nutrition && (
+                <span className="text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-orange-500/80 text-white backdrop-blur-sm">
+                  {recipe.nutrition.calories} kcal
+                </span>
+              )}
               {isFavorite && (
                 <motion.span 
                   initial={{ scale: 0 }}
@@ -1321,17 +1353,27 @@ function RecipeCard({ recipe: initialRecipe, isDarkMode, isFavorite, onFavorite,
         )}
 
         {isOpen && (
-           <div className="flex flex-col gap-2 mb-6">
+           <div className="flex flex-col gap-4 mb-6">
             {recipe.nutrition && (
-              <div className="flex flex-wrap gap-2">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400 text-[10px] font-black">
-                  <Star size={10} className="fill-orange-500" /> {recipe.nutrition.calories} kcal
-                </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[10px] font-black">
-                  <UserIcon size={10} /> {recipe.nutrition.protein} Protein
-                </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-green-500/10 text-green-600 dark:text-green-400 text-[10px] font-black">
-                  <UtensilsCrossed size={10} /> {recipe.nutrition.carbs} Carbs
+              <div className="bg-primary/5 rounded-[24px] p-6 border border-primary/10">
+                <p className="text-[10px] font-black uppercase tracking-widest mb-4 opacity-40">Nutritional Facts (Per Serving)</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+                  <div className="flex flex-col">
+                    <span className="text-xl font-black text-primary">{recipe.nutrition.calories}</span>
+                    <span className="text-[9px] font-bold uppercase opacity-50">Calories</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-lg font-black">{recipe.nutrition.protein}</span>
+                    <span className="text-[9px] font-bold uppercase opacity-50">Protein</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-lg font-black">{recipe.nutrition.carbs}</span>
+                    <span className="text-[9px] font-bold uppercase opacity-50">Carbs</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-lg font-black">{recipe.nutrition.fat}</span>
+                    <span className="text-[9px] font-bold uppercase opacity-50">Fat</span>
+                  </div>
                 </div>
               </div>
             )}

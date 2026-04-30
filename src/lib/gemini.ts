@@ -165,7 +165,10 @@ export async function analyzeFridgeImage(base64Image: string, mimeType: string):
     4. Assume basic pantry staples like salt, oil, turmeric, cumin, mustard seeds, and basic masalas are available.
     5. Language for names and methods: Hinglish (Hindi words in English script for a friendly, relatable Indian tone).
     6. Ensure the 'name' of the dish is catchy but clear (e.g., "Chatpata Paneer Bhurji" instead of "Spiced Cottage Cheese Crumble").
-    6. Provide a detailed 'method' string (as before) AND a 'steps' array.
+    7. Nutrition must be scientifically plausible:
+       - Weight Loss: Aim for 300-500 kcal per serving, high fiber, moderate protein.
+       - Muscle Gain: Aim for 500-800 kcal per serving, high protein (25g+).
+    8. Provide a detailed 'method' string (as before) AND a 'steps' array.
     7. Each entry in 'steps' must have:
        - 'text': The instruction for that step. Be VERY detailed and descriptive. Aim for at least 7-10 steps for a comprehensive guide.
        - 'visualPrompt': A cinematic, hyper-realistic, close-up food photography prompt for this step. Include sensory details like "sizzling", "vibrant colors", "steam rising", "golden-brown texture", "glistening oil", and "natural soft kitchen lighting". Specify the action (e.g., "A macro shot of hand-tempering mustard seeds in hot oil").
@@ -275,7 +278,10 @@ export async function analyzeIngredientsText(text: string, goal?: string): Promi
     4. Assume basic Indian pantry staples like salt, oil, turmeric, and local spices are available.
     5. Language for names and methods: Hinglish (Hindi words in English script for a friendly, relatable Indian tone).
     6. Ensure the 'name' of the dish is simple and descriptive (e.g., "Masala Pulao" or "Aloo Matar").
-    6. Provide a detailed 'method' string AND a 'steps' array.
+    7. Nutrition must be scientifically plausible:
+       - Weight Loss: Aim for 250-450 kcal, focus on veggies/lentils.
+       - Muscle Gain: Aim for 600-900 kcal, focus on protein density (30g+).
+    8. Provide a detailed 'method' string AND a 'steps' array.
     7. Each entry in 'steps' must have:
        - 'text': The instruction for that step. Be VERY detailed and descriptive. Aim for at least 7-10 steps for a comprehensive guide.
        - 'visualPrompt': A cinematic, hyper-realistic, close-up food photography prompt for this step. Include sensory details like "sizzling", "vibrant colors", "steam rising", "golden-brown texture", "glistening oil", and "natural soft kitchen lighting". Specify the action (e.g., "A macro shot of hand-tempering mustard seeds in hot oil").
