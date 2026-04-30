@@ -63,7 +63,7 @@ export async function generateRecipeImage(prompt: string): Promise<string> {
 }
 
 export async function getIngredientSubstitute(ingredient: string, dishContext: string): Promise<string> {
-  const model = "gemini-1.5-flash-8b";
+  const model = "gemini-3-flash-preview";
   
   const prompt = `You are a professional chef. A user is making "${dishContext}" but is missing the ingredient "${ingredient}". 
   Provide one or two best possible substitutes available in an Indian kitchen. 
@@ -77,7 +77,7 @@ export async function getIngredientSubstitute(ingredient: string, dishContext: s
         parts: [{ text: prompt }]
       }
     });
-    return response.candidates?.[0]?.content?.parts?.[0]?.text || "Try skipping it or using a neutral oil/base.";
+    return response.text?.trim() || "Try skipping it or using a neutral oil/base.";
   } catch (error) {
     console.error("Substitution failed:", error);
     return "Try skipping it or using a neutral oil/base.";
@@ -85,25 +85,73 @@ export async function getIngredientSubstitute(ingredient: string, dishContext: s
 }
 
 export async function customizeRecipe(recipe: Recipe, customRequest: string): Promise<Recipe> {
-  const model = "gemini-1.5-flash";
+  const model = "gemini-3-flash-preview";
 
-  const prompt = `You are a professional chef. Take this recipe: ${JSON.stringify(recipe)}.
-  Modify it based on this request: "${customRequest}".
-  Return a NEW JSON object that follows the exact same Recipe schema.
-  Maintain the Hinglish tone. Ensure all fields (name, ingredients, steps, etc.) are updated to reflect the change.`;
+  const systemInstruction = `
+    You are an expert Chef. You will receive a recipe and a request to modify it.
+    Return a NEW JSON object that follows the exact same Recipe schema.
+    Maintain the Hinglish tone. Ensure all fields (name, ingredients, steps, cookingTime, tips, nutrition) are updated to reflect the change.
+    Do not include any text outside the JSON object.
+  `;
+
+  const recipeSchema = {
+    type: Type.OBJECT,
+    properties: {
+      name: { type: Type.STRING },
+      type: { type: Type.STRING },
+      ingredients: { type: Type.ARRAY, items: { type: Type.STRING } },
+      method: { type: Type.STRING },
+      steps: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            text: { type: Type.STRING },
+            visualPrompt: { type: Type.STRING }
+          },
+          required: ["text", "visualPrompt"]
+        }
+      },
+      dishImagePrompt: { type: Type.STRING },
+      cookingTime: { type: Type.STRING },
+      tips: { type: Type.ARRAY, items: { type: Type.STRING } },
+      nutrition: {
+        type: Type.OBJECT,
+        properties: {
+          calories: { type: Type.NUMBER },
+          protein: { type: Type.STRING },
+          fat: { type: Type.STRING },
+          carbs: { type: Type.STRING }
+        },
+        required: ["calories", "protein", "fat", "carbs"]
+      }
+    },
+    required: ["name", "type", "ingredients", "method", "steps", "dishImagePrompt", "cookingTime", "tips", "nutrition"]
+  };
 
   try {
     const response = await ai.models.generateContent({
       model: model,
       contents: {
-        parts: [{ text: prompt }]
+        parts: [{ text: `Recipe: ${JSON.stringify(recipe)}\nRequest: ${customRequest}` }]
       },
       config: {
-        responseMimeType: "application/json"
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: recipeSchema
       }
     });
-    const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
+    
+    let text = response.text?.trim();
     if (!text) throw new Error("No response from AI");
+    
+    // Strip markdown JSON blocks if present
+    if (text.startsWith("```json")) {
+      text = text.replace(/^```json\n?/, "").replace(/\n?```$/, "");
+    } else if (text.startsWith("```")) {
+      text = text.replace(/^```\n?/, "").replace(/\n?```$/, "");
+    }
+    
     return JSON.parse(text);
   } catch (error) {
     console.error("Customization failed:", error);

@@ -31,6 +31,19 @@ export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [favorites, setFavorites] = useState<Recipe[]>([]);
   const [view, setView] = useState<"home" | "collection" | "admin">("home");
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   const [adminData, setAdminData] = useState<{ users: any[], feedback: any[] } | null>(null);
   const [loadingAdmin, setLoadingAdmin] = useState(false);
   const [showRatingModal, setShowRatingModal] = useState(false);
@@ -43,6 +56,10 @@ export default function App() {
   ];
 
   const handleQuickCookNow = async () => {
+    if (!isOnline) {
+      setError("Arre! You are offline. AI Chef needs internet to invent new recipes.");
+      return;
+    }
     setIsAnalyzing(true);
     setError(null);
     try {
@@ -364,6 +381,10 @@ export default function App() {
 
   const handleAnalyze = async () => {
     if (!image) return;
+    if (!isOnline) {
+      setError("AI needs internet to analyze your fridge photo. Check your connection!");
+      return;
+    }
     setIsAnalyzing(true);
     setError(null);
     try {
@@ -500,6 +521,12 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-3">
+          {!isOnline && (
+            <div className="flex items-center gap-1.5 px-3 py-1 bg-red-500/20 text-red-500 rounded-full text-[10px] font-black uppercase tracking-widest border border-red-500/30">
+              <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+              Offline
+            </div>
+          )}
           <div className={`hidden md:flex flex-col items-end mr-2 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
             <span className="text-[10px] font-black uppercase tracking-widest opacity-40">Logged in as</span>
             <span className="text-xs font-bold">{user?.name}</span>
@@ -688,7 +715,7 @@ export default function App() {
                 submitting={ratingSubmitting} 
               />
             </motion.div>
-          ) : !image ? (
+          ) : (!image && !result && !isAnalyzing) ? (
             <motion.div
               key="home"
               initial={{ opacity: 0 }}
@@ -775,8 +802,8 @@ export default function App() {
                     <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500" />
                     <span className="text-2xl">🔥</span>
                     <div className="text-left">
-                      <p className="text-sm leading-none">Quick Cook</p>
-                      <p className="text-[9px] opacity-70">What can I cook now?</p>
+                      <p className="text-sm leading-none">{isAnalyzing ? "Cooking..." : "Quick Cook"}</p>
+                      <p className="text-[9px] opacity-70">{isAnalyzing ? "AI is thinking" : "What can I cook now?"}</p>
                     </div>
                     <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
                   </motion.button>
@@ -911,28 +938,30 @@ export default function App() {
               className="space-y-12"
             >
               {/* Image Preview Card */}
-              <div className="relative group">
-                <motion.div 
-                  layoutId="target"
-                  className="relative rounded-[32px] overflow-hidden shadow-2xl bg-gray-200 aspect-video md:aspect-[21/9] border-4 border-white dark:border-white/5"
-                >
-                  <img src={image} alt="User fridge" className="w-full h-full object-cover" />
-                  {isAnalyzing && (
-                    <motion.div 
-                      className="absolute inset-x-0 h-1 bg-primary/80 shimmer z-20" 
-                      animate={{ top: ["0%", "100%", "0%"] }}
-                      transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                    />
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                  <button 
-                    onClick={handleReset}
-                    className="absolute top-6 right-6 p-4 bg-white/90 dark:bg-black/90 rounded-2xl text-primary hover:scale-110 transition-transform shadow-lg z-30"
+              {image && (
+                <div className="relative group">
+                  <motion.div 
+                    layoutId="target"
+                    className="relative rounded-[32px] overflow-hidden shadow-2xl bg-gray-200 aspect-video md:aspect-[21/9] border-4 border-white dark:border-white/5"
                   >
-                    <RefreshCcw size={20} />
-                  </button>
-                </motion.div>
-              </div>
+                    <img src={image} alt="User fridge" className="w-full h-full object-cover" />
+                    {isAnalyzing && (
+                      <motion.div 
+                        className="absolute inset-x-0 h-1 bg-primary/80 shimmer z-20" 
+                        animate={{ top: ["0%", "100%", "0%"] }}
+                        transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                      />
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <button 
+                      onClick={handleReset}
+                      className="absolute top-6 right-6 p-4 bg-white/90 dark:bg-black/90 rounded-2xl text-primary hover:scale-110 transition-transform shadow-lg z-30"
+                    >
+                      <RefreshCcw size={20} />
+                    </button>
+                  </motion.div>
+                </div>
+              )}
 
               {!result && !isAnalyzing && (
                 <div className="text-center space-y-6">
@@ -1118,6 +1147,7 @@ function RecipeCard({ recipe: initialRecipe, isDarkMode, isFavorite, onFavorite,
   const [loadingSubs, setLoadingSubs] = useState<Record<string, boolean>>({});
   const [mainImageUrl, setMainImageUrl] = useState<string | null>(recipe.mainImageUrl || null);
   const [isGeneratingMain, setIsGeneratingMain] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
   const displaySteps = useMemo(() => {
     if (recipe.steps && recipe.steps.length > 0) return recipe.steps;
@@ -1154,11 +1184,15 @@ function RecipeCard({ recipe: initialRecipe, isDarkMode, isFavorite, onFavorite,
     try {
       const newRecipe = await customizeRecipe(recipe, customRequest);
       setRecipe(newRecipe);
+      setMainImageUrl(null); // Reset image to generate a new one for the customized dish
       setCustomRequest("");
       setCompletedSteps(new Set());
+      setLocalError(null);
     } catch (e) {
       console.error("Customization failed", e);
+      setLocalError("Chef is slightly confused! Try a different request.");
     } finally {
+      setIsGeneratingMain(false);
       setIsCustomizing(false);
     }
   };
@@ -1381,18 +1415,46 @@ function RecipeCard({ recipe: initialRecipe, isDarkMode, isFavorite, onFavorite,
             >
               <div className="pt-8 border-t border-white/10 mt-6 space-y-12">
                 {/* Customizer Section */}
-                <div className="p-6 rounded-[28px] bg-white/5 border-2 border-primary/20 space-y-4">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="text-primary" size={16} />
-                    <p className="text-[10px] font-black text-primary uppercase tracking-widest">AI Customizer</p>
+                <div className={`p-6 rounded-[28px] border-2 transition-all ${isDarkMode ? 'bg-white/5 border-primary/20' : 'bg-primary/5 border-primary/10'} space-y-4`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="text-primary" size={16} />
+                      <p className="text-[10px] font-black text-primary uppercase tracking-widest">AI Super-Chef Customizer</p>
+                    </div>
+                    {isCustomizing && (
+                      <motion.div 
+                        animate={{ rotate: 360 }}
+                        transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
+                        className="text-primary"
+                      >
+                        <RefreshCcw size={14} />
+                      </motion.div>
+                    )}
                   </div>
+                  
+                  <p className="text-xs font-bold opacity-60 leading-relaxed">
+                    Want to swap ingredients? Make it vegan? Or maybe healthier? Just ask!
+                  </p>
+
+                  {localError && (
+                    <motion.p 
+                      initial={{ opacity: 0, y: -5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="text-[10px] font-bold text-red-500 bg-red-500/10 p-2 rounded-lg"
+                    >
+                      {localError}
+                    </motion.p>
+                  )}
+
                   <div className="flex gap-2">
                     <input 
                       type="text"
                       value={customRequest}
                       onChange={(e) => setCustomRequest(e.target.value)}
-                      placeholder="e.g., Make it vegan or spicier..."
-                      className="flex-1 bg-transparent border-b-2 border-white/10 py-2 text-sm font-bold focus:border-primary outline-none transition-colors"
+                      placeholder="e.g., Make it kid-friendly..."
+                      className={`flex-1 bg-transparent border-b-2 py-2 text-sm font-bold outline-none transition-colors ${
+                        isDarkMode ? 'border-white/10 focus:border-primary' : 'border-black/10 focus:border-primary'
+                      }`}
                       onKeyDown={(e) => e.key === 'Enter' && handleCustomize()}
                     />
                     <button 
@@ -1400,8 +1462,22 @@ function RecipeCard({ recipe: initialRecipe, isDarkMode, isFavorite, onFavorite,
                       disabled={isCustomizing || !customRequest.trim()}
                       className="p-2 bg-primary text-white rounded-xl shadow-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:scale-100"
                     >
-                      <ChevronRight size={20} />
+                      {isCustomizing ? <RefreshCcw size={20} className="animate-spin" /> : <ChevronRight size={20} />}
                     </button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    {['Make it Vegan', 'Spicier', 'Low Calorie', 'Jain version'].map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        onClick={() => setCustomRequest(suggestion)}
+                        className={`text-[9px] font-black uppercase tracking-tighter px-2 py-1 rounded-md border transition-all ${
+                          isDarkMode ? 'border-white/10 hover:border-primary/50' : 'border-black/5 hover:border-primary/30'
+                        }`}
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
