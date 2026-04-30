@@ -1041,8 +1041,6 @@ function CaptureCard({ title, desc, icon, onClick, primary, isDarkMode }: any) {
 function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any) {
   const [isOpen, setIsOpen] = useState(false);
   const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
-  const [mainImageUrl, setMainImageUrl] = useState<string | null>(recipe.mainImageUrl || null);
-  const [isGeneratingMain, setIsGeneratingMain] = useState(false);
 
   const displaySteps = useMemo(() => {
     if (recipe.steps && recipe.steps.length > 0) return recipe.steps;
@@ -1074,24 +1072,6 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
     }
     setCompletedSteps(newSteps);
   };
-
-  useEffect(() => {
-    if (isOpen && !mainImageUrl && recipe.dishImagePrompt && !isGeneratingMain) {
-      const loadMainImage = async () => {
-        setIsGeneratingMain(true);
-        try {
-          const url = await generateRecipeImage(recipe.dishImagePrompt);
-          setMainImageUrl(url);
-          // If we wanted to persist this, we'd need to update the parent state or firestore
-        } catch (e) {
-          console.error("Main image failed", e);
-        } finally {
-          setIsGeneratingMain(false);
-        }
-      };
-      loadMainImage();
-    }
-  }, [isOpen, recipe.dishImagePrompt]);
   
   return (
     <motion.div
@@ -1100,31 +1080,6 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
       viewport={{ once: true }}
       className={`rounded-[32px] overflow-hidden border-2 transition-all duration-300 ${isDarkMode ? 'bg-white/5 border-white/5' : 'bg-white border-gray-100 shadow-xl'}`}
     >
-      {/* Featured Dish Image */}
-      {isOpen && (
-        <div className="relative h-48 md:h-64 bg-black/5 dark:bg-white/5 overflow-hidden">
-          {mainImageUrl ? (
-            <motion.img 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              src={mainImageUrl} 
-              alt={recipe.name} 
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-            />
-          ) : isGeneratingMain ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-              <Sparkles className="text-primary animate-pulse" size={24} />
-              <span className="text-[10px] font-black uppercase tracking-widest opacity-40">Styling the dish...</span>
-            </div>
-          ) : null}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-          <div className="absolute bottom-6 left-8">
-            <h3 className="text-2xl font-black text-white leading-tight">{recipe.name}</h3>
-          </div>
-        </div>
-      )}
-
       <div className="p-8">
         {!isOpen && (
           <div className="flex justify-between items-start mb-6">
@@ -1218,10 +1173,10 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
               className="overflow-hidden"
             >
               <div className="pt-8 border-t border-white/10 mt-6 space-y-12">
-                {/* Step-by-Step Visual Guide */}
+                {/* Step-by-Step Guide */}
                 <div className="space-y-6">
                   <p className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-2">
-                    <ImageIcon size={12} /> Step-by-Step Visual Guide
+                    <UtensilsCrossed size={12} /> Step-by-Step Instructions
                   </p>
                   <div className="space-y-10">
                     {displaySteps.map((step: RecipeStep, i: number) => (
@@ -1269,32 +1224,10 @@ function RecipeCard({ recipe, isDarkMode, isFavorite, onFavorite, onShare }: any
 }
 
 function StepWithVisual({ step, index, isDarkMode, isCompleted, onToggle }: any) {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const hasGenerated = useRef(false);
-
-  // Auto-generate step image when visible
-  // We don't want to spam generation, so we hide it behind a button or use a low cost 
-  // For the "Enhanced" request, let's make them clickable to see the visual
-  const handleGenerate = (e: any) => {
-    e.stopPropagation(); // Don't toggle completion when clicking visualize
-    if (isLoading || imageUrl) return;
-    setIsLoading(true);
-    try {
-      generateRecipeImage(step.visualPrompt).then(url => {
-        setImageUrl(url);
-      });
-    } catch (e) {
-      console.error("Step image failed", e);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   return (
     <div 
       onClick={onToggle}
-      className={`grid md:grid-cols-[1fr_200px] gap-6 group cursor-pointer p-4 -m-4 rounded-3xl transition-all duration-300 ${
+      className={`flex flex-col gap-4 group cursor-pointer p-4 -m-4 rounded-3xl transition-all duration-300 ${
         isCompleted ? (isDarkMode ? 'bg-green-500/5 opacity-60' : 'bg-green-50/50 opacity-60') : 'hover:bg-black/5 dark:hover:bg-white/5'
       }`}
     >
@@ -1327,45 +1260,6 @@ function StepWithVisual({ step, index, isDarkMode, isCompleted, onToggle }: any)
             </p>
           </div>
         </div>
-      </div>
-
-      <div className="relative">
-        {imageUrl ? (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className={`aspect-square rounded-2xl overflow-hidden shadow-lg border-2 transition-all ${
-              isCompleted ? 'border-green-500/30' : 'border-primary/10'
-            }`}
-          >
-            <img 
-              src={imageUrl} 
-              alt={`Step ${index + 1}`} 
-              className="w-full h-full object-cover" 
-              referrerPolicy="no-referrer"
-            />
-          </motion.div>
-        ) : (
-          <button 
-            onClick={handleGenerate}
-            disabled={isLoading}
-            className={`w-full aspect-square rounded-2xl border-2 border-dashed flex flex-col items-center justify-center gap-2 transition-all ${
-              isDarkMode ? 'border-white/10 hover:border-primary/50 bg-white/5' : 'border-gray-200 hover:border-primary/50 bg-gray-50'
-            }`}
-          >
-            {isLoading ? (
-              <>
-                <RefreshCcw className="text-primary animate-spin" size={20} />
-                <span className="text-[10px] font-black uppercase tracking-tighter opacity-40">Sketching...</span>
-              </>
-            ) : (
-              <>
-                <ImageIcon className="text-gray-400 group-hover:text-primary transition-colors" size={20} />
-                <span className="text-[9px] font-black uppercase tracking-tighter opacity-40 group-hover:opacity-100 transition-opacity">Visualize</span>
-              </>
-            )}
-          </button>
-        )}
       </div>
     </div>
   );
