@@ -137,11 +137,11 @@ async function startServer() {
   };
 
   // --- Auth Endpoints ---
-  app.get("/api/auth/ping", authenticate, (req, res) => {
+  app.get("/api/auth/ping", authenticate, (req: any, res: any) => {
     res.json({ success: true, user: req.user });
   });
 
-  app.post("/api/auth/logout", (req, res) => {
+  app.post("/api/auth/logout", (req: any, res: any) => {
     res.json({ success: true });
   });
 
@@ -253,6 +253,8 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
+    const startMsg = `[${new Date().toISOString()}] SYSTEM: Server listening on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode\n`;
+    fs.appendFileSync(logPath, startMsg);
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }

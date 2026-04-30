@@ -5,7 +5,7 @@ import {
   CheckCircle2, ChevronRight, Info, X,
   Moon, Sun, Heart, Share2, Home, 
   Plus, Star, Clock, LogOut, User as UserIcon, Bookmark, BookmarkCheck,
-  Image as ImageIcon, Mic, MicOff
+  Image as ImageIcon, Mic, MicOff, RotateCcw
 } from "lucide-react";
 import { analyzeFridgeImage, analyzeIngredientsText, type AnalysisResponse, type Recipe } from "./lib/gemini";
 import { AuthScreen } from "./components/AuthScreen";
@@ -615,48 +615,6 @@ export default function App() {
                 onSubmit={submitRating} 
                 submitting={ratingSubmitting} 
               />
-            </motion.div>
-          ) : isCameraOpen ? (
-            <motion.div
-              key="camera"
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="relative rounded-3xl overflow-hidden glass shadow-2xl aspect-[3/4] border-4 border-primary/20"
-            >
-              <video 
-                ref={videoRef} 
-                autoPlay 
-                playsInline 
-                muted
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-              
-              <div className="absolute top-6 left-6 flex items-center gap-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/20">
-                <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
-                <span className="text-[10px] font-bold text-white uppercase tracking-widest leading-none">Scanning View</span>
-              </div>
-
-              <button 
-                onClick={stopCamera}
-                className="absolute top-6 right-6 w-10 h-10 bg-white/10 backdrop-blur-md border border-white/20 rounded-full flex items-center justify-center text-white"
-              >
-                <X size={20} />
-              </button>
-
-              <div className="absolute bottom-12 left-0 right-0 flex justify-center items-center gap-10">
-                <button onClick={switchCamera} className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-white">
-                  <RotateCcw size={20} />
-                </button>
-                <button 
-                  onClick={capturePhoto}
-                  className="w-20 h-20 bg-primary rounded-full flex items-center justify-center p-1 shadow-[0_0_30px_rgba(255,122,0,0.5)] active:scale-90 transition-transform"
-                >
-                  <div className="w-full h-full rounded-full border-4 border-white" />
-                </button>
-                <div className="w-12" />
-              </div>
             </motion.div>
           ) : !image ? (
             <motion.div

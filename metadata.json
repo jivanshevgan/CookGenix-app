@@ -2,7 +2,7 @@
   "name": "CookGenix",
   "description": "Your AI-powered Indian Fusion chef. Snap a fridge photo and get instant, detailed, budget-friendly recipes.",
   "requestFramePermissions": [
-    "camera"
+    "microphone"
   ],
   "majorCapabilities": [
     "Image Recognition",
