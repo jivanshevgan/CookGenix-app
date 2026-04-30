@@ -6,7 +6,7 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Helper functions
+    // Phase 3: Primitives
     function isSignedIn() {
       return request.auth != null;
     }
@@ -28,16 +28,16 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && request.auth.token.email_verified == true && request.auth.token.email == 'jeevanshevgan13@gmail.com';
+      return isSignedIn() && request.auth.token.email == 'jeevanshevgan13@gmail.com';
     }
 
-    // User entity validation
+    // Phase 4: Entity Validation
     function isValidUser(data) {
       return data.user_id == request.auth.uid
           && data.uid == request.auth.uid
           && data.name is string && data.name.size() <= 128
           && data.email is string && data.email.size() <= 256
-          && data.createdAt is string
+          && data.createdAt is string // Server sends ISO string in current setup
           && data.updatedAt is string;
     }
 
@@ -73,7 +73,7 @@ service cloud.firestore {
       allow update: if isSignedIn() 
           && existing().user_id == request.auth.uid
           && isValidRecipe(incoming())
-          && (incoming().diff(existing()).affectedKeys().hasOnly(['name', 'ingredients', 'method', 'updatedAt']) || isAdmin());
+          && incoming().user_id == existing().user_id;
           
       allow delete: if isSignedIn() && existing().user_id == request.auth.uid;
     }
@@ -81,6 +81,7 @@ service cloud.firestore {
     match /feedback/{feedbackId} {
       allow create: if isSignedIn() && isValidFeedback(incoming());
       allow list, get: if isAdmin();
+      // Users cannot update or delete feedback once submitted
     }
   }
 }

@@ -20,12 +20,46 @@
         }
       },
       "required": ["uid", "name", "createdAt", "updatedAt"]
+    },
+    "Recipe": {
+      "title": "Saved Recipe",
+      "description": "A recipe saved by a user",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string", "description": "The ID of the user who saved this recipe" },
+        "name": { "type": "string" },
+        "ingredients": { "type": "array", "items": { "type": "string" } },
+        "method": { "type": "string" },
+        "savedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "name", "savedAt"]
+    },
+    "Feedback": {
+      "title": "User Feedback",
+      "description": "Feedback submitted by users",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "email": { "type": "string" },
+        "rating": { "type": "integer" },
+        "message": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "rating", "timestamp"]
     }
   },
   "firestore": {
     "/users/{uid}": {
       "schema": "User",
       "description": "User profiles stored by their unique UID"
+    },
+    "/recipes/{recipeId}": {
+      "schema": "Recipe",
+      "description": "Individual recipes saved by users, filtered by user_id"
+    },
+    "/feedback/{feedbackId}": {
+      "schema": "Feedback",
+      "description": "Feedback entries"
     },
     "/_health/check": {
       "schema": { "type": "object", "properties": { "status": { "type": "string" } } },

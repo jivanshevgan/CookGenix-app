@@ -61,16 +61,16 @@ async function startServer() {
       
       if (!userDoc.exists) {
         const newUser = {
+          user_id: uid, // Explicit user_id
           uid: uid,
           email: userEmail,
           name: decodedToken.name || userEmail.split('@')[0] || "Unknown",
-          favorites: [],
           createdAt: now,
           lastLogin: now,
           updatedAt: now
         };
         await userRef.set(newUser);
-        fs.appendFileSync(logPath, `[${now}] DATABASE_WRITE: New User Created in Firestore (${userEmail})\n`);
+        fs.appendFileSync(logPath, `[now] DATABASE_WRITE: New User Created in Firestore (${userEmail})\n`);
       } else {
         const updateData: any = {
           lastLogin: now,
@@ -79,9 +79,11 @@ async function startServer() {
         };
         if (decodedToken.name) updateData.name = decodedToken.name;
         await userRef.update(updateData);
-        fs.appendFileSync(logPath, `[${now}] DATABASE_WRITE: User Session Updated in Firestore (${userEmail})\n`);
+        fs.appendFileSync(logPath, `[now] DATABASE_WRITE: User Session Updated in Firestore (${userEmail})\n`);
       }
 
+      req.userId = uid; // Set userId for later use
+      req.user = decodedToken;
       next();
     } catch (error) {
       fs.appendFileSync(logPath, `[${new Date().toISOString()}] AUTH_ERROR: ${error instanceof Error ? error.message : error}\n`);
@@ -103,9 +105,13 @@ async function startServer() {
 
   app.get("/api/favorites", authenticate, async (req: any, res: any) => {
     try {
-      const uid = req.user.uid;
-      const userDoc = await db.collection("users").doc(uid).get();
-      res.json({ favorites: userDoc.data()?.favorites || [] });
+      const userId = req.userId;
+      const snapshot = await db.collection("recipes")
+        .where("user_id", "==", userId)
+        .get();
+      
+      const favorites = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json({ favorites });
     } catch (e) {
       console.error("Fetch favorites error:", e);
       res.status(500).json({ error: "Failed to fetch favorites" });
@@ -114,13 +120,28 @@ async function startServer() {
 
   app.post("/api/favorites", authenticate, async (req: any, res: any) => {
     try {
-      const uid = req.user.uid;
+      const userId = req.userId;
       const { favorites } = req.body;
       
-      await db.collection("users").doc(uid).update({
-        favorites,
-        updatedAt: new Date().toISOString()
+      // For simplicity in this demo, we replace the entire collection for this user
+      // In a real app, you would add/remove individual recipes
+      const batch = db.batch();
+      
+      // Delete old ones
+      const oldSnap = await db.collection("recipes").where("user_id", "==", userId).get();
+      oldSnap.docs.forEach(doc => batch.delete(doc.ref));
+      
+      // Add new ones
+      favorites.forEach((recipe: any) => {
+        const ref = db.collection("recipes").doc();
+        batch.set(ref, {
+          ...recipe,
+          user_id: userId,
+          updatedAt: new Date().toISOString()
+        });
       });
+      
+      await batch.commit();
 
       res.json({ success: true });
     } catch (e) {
@@ -134,7 +155,7 @@ async function startServer() {
       const { rating, message } = req.body;
       
       await db.collection("feedback").add({
-        uid: req.user.uid,
+        user_id: req.userId,
         email: req.user.email,
         rating,
         message,

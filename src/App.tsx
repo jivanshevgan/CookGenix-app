@@ -767,48 +767,6 @@ export default function App() {
               </motion.div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center px-4">
-                {/* Diet Selection */}
-                <div className="sm:col-span-3 mb-6 flex flex-col items-center gap-4">
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">Choose AI Goal</p>
-                  <div className="flex flex-wrap justify-center gap-3">
-                    {DIETARY_GOALS.map((goal) => (
-                      <button
-                        key={goal.name}
-                        onClick={() => setDietaryGoal(goal.name)}
-                        className={`px-6 py-3 rounded-full border-2 transition-all flex items-center gap-3 ${
-                          dietaryGoal === goal.name 
-                            ? 'bg-primary border-primary text-white shadow-lg scale-105' 
-                            : (isDarkMode ? 'bg-white/5 border-white/10 hover:border-primary/50' : 'bg-white border-gray-100 hover:border-primary/50')
-                        }`}
-                      >
-                        <span className={dietaryGoal === goal.name ? 'text-white' : 'text-primary'}>{goal.icon}</span>
-                        <div className="text-left">
-                          <p className="text-xs font-black leading-none">{goal.name}</p>
-                          <p className={`text-[8px] font-bold uppercase opacity-50 ${dietaryGoal === goal.name ? 'text-white' : ''}`}>{goal.desc}</p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="sm:col-span-3 flex justify-center mb-8">
-                  <motion.button
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={handleQuickCookNow}
-                    disabled={isAnalyzing}
-                    className="group relative px-10 py-5 bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-[24px] font-black shadow-[0_15px_40px_rgba(249,115,22,0.3)] flex items-center gap-4 uppercase tracking-wider overflow-hidden"
-                  >
-                    <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500" />
-                    <span className="text-2xl">🔥</span>
-                    <div className="text-left">
-                      <p className="text-sm leading-none">{isAnalyzing ? "Cooking..." : "Quick Cook"}</p>
-                      <p className="text-[9px] opacity-70">{isAnalyzing ? "AI is thinking" : "What can I cook now?"}</p>
-                    </div>
-                    <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
-                  </motion.button>
-                </div>
-
                 {/* Visual Native Camera Integration */}
                 <div className="relative group">
                   <input 
@@ -861,6 +819,49 @@ export default function App() {
                       </div>
                     </div>
                   )}
+                </div>
+
+                {/* Diet Selection - Moved to Bottom */}
+                <div className="sm:col-span-3 mt-8 mb-6 flex flex-col items-center gap-4 pt-8 border-t border-black/5 dark:border-white/5">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">Choose AI Goal</p>
+                  <div className="flex flex-wrap justify-center gap-3">
+                    {DIETARY_GOALS.map((goal) => (
+                      <button
+                        key={goal.name}
+                        onClick={() => setDietaryGoal(goal.name)}
+                        className={`px-6 py-4 rounded-[32px] border-2 transition-all flex flex-col items-center gap-4 ${
+                          dietaryGoal === goal.name 
+                            ? 'bg-primary border-primary text-white shadow-lg scale-105' 
+                            : (isDarkMode ? 'bg-white/5 border-white/10 hover:border-primary/50' : 'bg-white border-gray-100 hover:border-primary/50')
+                        }`}
+                      >
+                        <div className="text-center">
+                          <p className="text-xs font-black leading-none mb-1">{goal.name}</p>
+                          <p className={`text-[8px] font-bold uppercase opacity-50 ${dietaryGoal === goal.name ? 'text-white' : ''}`}>{goal.desc}</p>
+                        </div>
+                        <span className={`text-xl ${dietaryGoal === goal.name ? 'text-white' : 'text-primary'}`}>{goal.icon}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Quick Cook Section - Moved to Bottom */}
+                <div className="sm:col-span-3 flex justify-center mb-8">
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={handleQuickCookNow}
+                    disabled={isAnalyzing}
+                    className="group relative px-12 py-8 bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-[40px] font-black shadow-[0_15px_40px_rgba(249,115,22,0.3)] flex flex-col items-center gap-4 uppercase tracking-wider overflow-hidden"
+                  >
+                    <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500" />
+                    <div className="text-center">
+                      <p className="text-sm leading-none">{isAnalyzing ? "Cooking..." : "Quick Cook"}</p>
+                      <p className="text-[9px] opacity-70 mt-1">{isAnalyzing ? "AI is thinking" : "What can I cook now?"}</p>
+                    </div>
+                    <span className="text-4xl">🔥</span>
+                    <ChevronRight size={20} className="group-hover:translate-y-1 transition-transform rotate-90" />
+                  </motion.button>
                 </div>
               </div>
 
