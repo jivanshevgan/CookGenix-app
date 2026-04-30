@@ -2,11 +2,12 @@ import { useState, useRef, type ChangeEvent, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Camera, ChefHat, Sparkles, UtensilsCrossed, RefreshCcw, 
-  CheckCircle2, ChevronRight, Info, X, Zap, RotateCcw, 
-  Image as ImageIcon, Moon, Sun, Heart, Share2, Home, 
-  Plus, Star, Clock, LogOut, User as UserIcon, Bookmark, BookmarkCheck
+  CheckCircle2, ChevronRight, Info, X,
+  Moon, Sun, Heart, Share2, Home, 
+  Plus, Star, Clock, LogOut, User as UserIcon, Bookmark, BookmarkCheck,
+  Image as ImageIcon, Mic, MicOff
 } from "lucide-react";
-import { analyzeFridgeImage, type AnalysisResponse, type Recipe } from "./lib/gemini";
+import { analyzeFridgeImage, analyzeIngredientsText, type AnalysisResponse, type Recipe } from "./lib/gemini";
 import { AuthScreen } from "./components/AuthScreen";
 import { auth } from "./lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
@@ -18,8 +19,6 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [cameraFacing, setCameraFacing] = useState<"user" | "environment">("environment");
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [favorites, setFavorites] = useState<Recipe[]>([]);
   const [view, setView] = useState<"home" | "collection" | "admin">("home");
@@ -59,7 +58,74 @@ export default function App() {
   const [userRating, setUserRating] = useState(0);
   const [feedback, setFeedback] = useState("");
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
-  const [showPermissionHelp, setShowPermissionHelp] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [transcript, setTranscript] = useState("");
+
+  const recognitionRef = useRef<any>(null);
+
+  // Initialize Speech Recognition
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = true;
+      recognitionRef.current.interimResults = true;
+      recognitionRef.current.lang = 'en-IN'; // Optimized for Indian English
+
+      recognitionRef.current.onresult = (event: any) => {
+        let currentTranscript = "";
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          currentTranscript += event.results[i][0].transcript;
+        }
+        setTranscript(currentTranscript);
+      };
+
+      recognitionRef.current.onerror = (event: any) => {
+        console.error("Speech Recognition Error", event.error);
+        setIsListening(false);
+        if (event.error === 'not-allowed') {
+          setError("Microphone permission denied. Please enable it in browser settings.");
+        }
+      };
+
+      recognitionRef.current.onend = () => {
+        setIsListening(false);
+      };
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+    } else {
+      setTranscript("");
+      setError(null);
+      try {
+        recognitionRef.current?.start();
+        setIsListening(true);
+      } catch (e) {
+        console.error("Failed to start speech recognition", e);
+        setError("Arre! Could not start voice search. Please try again.");
+      }
+    }
+  };
+
+  const handleVoiceAnalyze = async () => {
+    if (!transcript) return;
+    setIsAnalyzing(true);
+    setError(null);
+    try {
+      const data = await analyzeIngredientsText(transcript);
+      setResult(data);
+      setTimeout(() => setShowRatingModal(true), 1500);
+    } catch (err) {
+      console.error(err);
+      setError("Something went wrong while processing your voice command. Please try again.");
+    } finally {
+      setIsAnalyzing(false);
+      setIsListening(false);
+    }
+  };
 
   // Authentication handlers
   const handleAuthSuccess = (userData: any) => {
@@ -165,8 +231,6 @@ export default function App() {
   }, [favorites, authStatus]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
 
   const toggleFavorite = (recipe: Recipe) => {
     const isFav = favorites.some(fav => fav.name.trim().toLowerCase() === recipe.name.trim().toLowerCase());
@@ -213,86 +277,6 @@ export default function App() {
     } else {
       document.documentElement.classList.remove("dark");
     }
-  };
-
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    setIsCameraOpen(false);
-  };
-
-  const startCamera = async () => {
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("Camera API not supported in this browser.");
-      }
-      
-      const constraints = {
-        video: { 
-          facingMode: { ideal: cameraFacing },
-          width: { ideal: 1080 },
-          height: { ideal: 1920 }
-        },
-        audio: false
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
-
-      // Ensure video element is ready
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        try {
-          await videoRef.current.play();
-        } catch (e) {
-          console.error("Video play failed:", e);
-        }
-      }
-
-      setError(null);
-    } catch (err: any) {
-      console.error("Camera error:", err);
-      setIsCameraOpen(false);
-      
-      let msg = "Camera access denied.";
-      if (err.name === 'NotAllowedError') msg = "Permission Denied: Please allow camera access in your browser settings.";
-      if (err.name === 'NotFoundError') msg = "Camera not found on this device.";
-      
-      setError(msg);
-      setShowPermissionHelp(true);
-    }
-  };
-
-  useEffect(() => {
-    if (isCameraOpen) {
-      startCamera();
-    }
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, [cameraFacing, isCameraOpen]);
-
-  const capturePhoto = () => {
-    if (videoRef.current) {
-      const canvas = document.createElement("canvas");
-      canvas.width = videoRef.current.videoWidth;
-      canvas.height = videoRef.current.videoHeight;
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.drawImage(videoRef.current, 0, 0);
-        const dataUrl = canvas.toDataURL("image/jpeg");
-        setImage(dataUrl);
-        stopCamera();
-      }
-    }
-  };
-
-  const switchCamera = () => {
-    setCameraFacing(prev => prev === "user" ? "environment" : "user");
   };
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -364,21 +348,6 @@ export default function App() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const [permissionStatus, setPermissionStatus] = useState<PermissionState | 'unknown'>('unknown');
-
-  // Check camera permission status
-  useEffect(() => {
-    if (navigator.permissions && navigator.permissions.query) {
-      navigator.permissions.query({ name: 'camera' as PermissionName })
-        .then((result) => {
-          setPermissionStatus(result.state);
-          result.onchange = () => setPermissionStatus(result.state);
-        })
-        .catch(() => setPermissionStatus('unknown'));
-    }
-  }, []);
-
-
   if (authStatus === 'loading') {
     return (
       <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-bg-dark text-white' : 'bg-bg-light text-gray-900'}`}>
@@ -443,82 +412,6 @@ export default function App() {
                 className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg disabled:opacity-50 transition-opacity"
               >
                 {ratingSubmitting ? "Submitting..." : "Submit Review"}
-              </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {/* Permission Help Modal */}
-      <AnimatePresence>
-        {showPermissionHelp && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className={`max-w-md w-full p-8 rounded-[32px] glass shadow-2xl relative ${isDarkMode ? 'bg-bg-dark text-white' : 'bg-white text-gray-900'}`}
-            >
-              <button 
-                onClick={() => setShowPermissionHelp(false)}
-                className="absolute top-6 right-6 p-2 hover:bg-black/5 rounded-full transition-colors"
-              >
-                <X size={20} />
-              </button>
-              
-              <h3 className="text-2xl font-black mb-6 flex items-center gap-3 text-primary">
-                <Info size={28} />
-                Permission Help
-              </h3>
-              
-              <div className="space-y-6 text-sm font-medium leading-relaxed opacity-90">
-                <div className="p-4 bg-primary/10 rounded-2xl border border-primary/20 flex flex-col items-center text-center gap-3">
-                  <p className="font-black text-primary uppercase tracking-widest text-xs">Best Solution</p>
-                  <p className="font-bold">Open this app in a New Tab</p>
-                  <p className="text-xs opacity-80">Browsers often block cameras inside previews. Opening in a new tab usually fixes all permission issues instantly.</p>
-                  <a 
-                    href={window.location.href} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="w-full py-3 bg-primary text-white rounded-xl font-black text-center shadow-lg hover:scale-[1.02] transition-transform"
-                  >
-                    Open in New Tab
-                  </a>
-                </div>
-
-                <div className="h-px bg-black/5 dark:bg-white/5" />
-
-                <p>If you prefer to stay here, follow these steps:</p>
-                
-                <div className="space-y-4">
-                  <div className="flex gap-4">
-                    <div className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center shrink-0 text-[10px] font-black">1</div>
-                    <p>Look for the <strong>lock icon (🔒)</strong> or camera icon in your browser's address bar and click it.</p>
-                  </div>
-                  <div className="flex gap-4">
-                    <div className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center shrink-0 text-[10px] font-black">2</div>
-                    <p>Toggle <strong>Camera</strong> and <strong>Pop-ups</strong> to "Allow".</p>
-                  </div>
-                  <div className="flex gap-4">
-                    <div className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center shrink-0 text-[10px] font-black">3</div>
-                    <p>Refresh the page and try again.</p>
-                  </div>
-                </div>
-
-                <div className="p-4 bg-primary/5 rounded-2xl border border-primary/10">
-                  <p className="text-primary font-bold mb-1">Pro-Tip:</p>
-                  <p>If "Live Camera" fails, use the <strong>"System Camera"</strong> button. It uses your device's native app which almost always works!</p>
-                </div>
-              </div>
-              
-              <button 
-                onClick={() => setShowPermissionHelp(false)}
-                className="w-full mt-8 py-4 bg-primary text-white font-black rounded-2xl shadow-lg"
-              >
-                Got it!
               </button>
             </motion.div>
           </motion.div>
@@ -853,29 +746,54 @@ export default function App() {
                   />
                 </div>
 
-                {/* Experimental In-Browser Camera */}
-                <CaptureCard 
-                  title="Live View" 
-                  desc="In-browser" 
-                  icon={<Zap size={24} />} 
-                  onClick={() => setIsCameraOpen(true)}
-                  isDarkMode={isDarkMode}
-                />
+                {/* Voice Integration */}
+                <div className="relative group">
+                  <CaptureCard 
+                    title="Voice" 
+                    desc={isListening ? "Listening..." : "Tell Chef"} 
+                    icon={isListening ? <MicOff size={24} className="text-red-500 animate-pulse" /> : <Mic size={24} />} 
+                    onClick={toggleListening}
+                    isDarkMode={isDarkMode}
+                  />
+                </div>
               </div>
 
-              {permissionStatus === 'denied' && (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="mt-6 mx-4 p-4 rounded-2xl bg-orange-500/10 border border-orange-500/20 text-orange-500 text-xs font-bold flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-3">
-                    <Info size={16} />
-                    <span>Camera permission is currently blocked</span>
-                  </div>
-                  <button onClick={() => setShowPermissionHelp(true)} className="underline">How to fix?</button>
-                </motion.div>
-              )}
+              {/* Speech Transcript Overlay */}
+              <AnimatePresence>
+                {(isListening || transcript) && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 20 }}
+                    className="mt-8 p-8 glass rounded-[32px] border-2 border-primary/30 max-w-lg mx-auto"
+                  >
+                    <div className="flex items-center justify-between mb-6">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${isListening ? 'bg-red-500 animate-pulse' : 'bg-primary'}`}>
+                          <Mic size={18} className="text-white" />
+                        </div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-primary">
+                          {isListening ? "Listening to ingredients..." : "Voice Input Received"}
+                        </p>
+                      </div>
+                      <button onClick={() => { setIsListening(false); setTranscript(""); }} className="p-1 opacity-40 hover:opacity-100"><X size={16}/></button>
+                    </div>
+                    
+                    <p className={`text-lg font-bold italic ${!transcript ? 'text-gray-400' : ''}`}>
+                      {transcript || "Speak your ingredients (e.g., 'I have 2 eggs, some milk, and flour')"}
+                    </p>
+
+                    {transcript && !isListening && (
+                      <button 
+                        onClick={handleVoiceAnalyze}
+                        className="w-full mt-6 py-4 bg-primary text-white rounded-2xl font-black shadow-lg hover:scale-[1.02] transition-transform flex items-center justify-center gap-2"
+                      >
+                        <Sparkles size={18} /> Plan My Meals
+                      </button>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Footer Icons */}
               <div className="mt-20 flex justify-center gap-12 opacity-40 grayscale pointer-events-none">
@@ -950,12 +868,6 @@ export default function App() {
                     <Info size={18} />
                     <p>{error}</p>
                   </div>
-                  <button 
-                    onClick={() => setShowPermissionHelp(true)}
-                    className="w-full py-4 glass border-primary/20 text-primary font-bold text-xs uppercase tracking-widest rounded-2xl flex items-center justify-center gap-2"
-                  >
-                    <Info size={14} /> Troubleshoot Permissions
-                  </button>
                 </div>
               )}
 
