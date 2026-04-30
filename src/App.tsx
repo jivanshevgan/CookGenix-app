@@ -943,7 +943,7 @@ export default function App() {
                 <div className="relative group">
                   <motion.div 
                     layoutId="target"
-                    className="relative rounded-[32px] overflow-hidden shadow-2xl bg-gray-200 aspect-video md:aspect-[21/9] border-4 border-white dark:border-white/5"
+                    className={`relative rounded-[32px] overflow-hidden shadow-2xl bg-gray-200 transition-all duration-500 border-4 border-white dark:border-white/5 ${result ? 'aspect-[21/9] md:h-48' : 'aspect-video md:aspect-[21/9]'}`}
                   >
                     <img src={image} alt="User fridge" className="w-full h-full object-cover" />
                     {isAnalyzing && (
@@ -1213,11 +1213,11 @@ function RecipeCard({ recipe: initialRecipe, isDarkMode, isFavorite, onFavorite,
   };
 
   useEffect(() => {
-    if (isOpen && !mainImageUrl && recipe.dishImagePrompt && !isGeneratingMain) {
+    if (recipe.dishImagePrompt && !mainImageUrl && !isGeneratingMain) {
       const loadMainImage = async () => {
         setIsGeneratingMain(true);
         try {
-          const url = await generateRecipeImage(recipe.dishImagePrompt);
+          const url = await generateRecipeImage(recipe.dishImagePrompt, recipe.name);
           setMainImageUrl(url);
         } catch (e) {
           console.error("Main image failed", e);
@@ -1227,7 +1227,7 @@ function RecipeCard({ recipe: initialRecipe, isDarkMode, isFavorite, onFavorite,
       };
       loadMainImage();
     }
-  }, [isOpen, recipe.dishImagePrompt, mainImageUrl, isGeneratingMain]);
+  }, [recipe.dishImagePrompt, mainImageUrl, isGeneratingMain]);
   
   return (
     <motion.div
@@ -1236,100 +1236,92 @@ function RecipeCard({ recipe: initialRecipe, isDarkMode, isFavorite, onFavorite,
       viewport={{ once: true }}
       className={`rounded-[32px] overflow-hidden border-2 transition-all duration-300 ${isDarkMode ? 'bg-white/5 border-white/5' : 'bg-white border-gray-100 shadow-xl'}`}
     >
-      {/* Featured Dish Image */}
-      {isOpen && (
-        <div className="relative h-48 md:h-64 bg-black/5 dark:bg-white/5 overflow-hidden">
-          {mainImageUrl ? (
-            <motion.img 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              src={mainImageUrl} 
-              alt={recipe.name} 
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-            />
-          ) : isGeneratingMain ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-              <Sparkles className="text-primary animate-pulse" size={24} />
-              <span className="text-[10px] font-black uppercase tracking-widest opacity-40">Styling the dish...</span>
-            </div>
-          ) : null}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-          <div className="absolute bottom-6 left-8">
-            <h3 className="text-2xl font-black text-white leading-tight">{recipe.name}</h3>
+      {/* Recipe Header Image - Always show it once loaded */}
+      <div className={`relative ${isOpen ? 'h-48 md:h-64' : 'h-32 md:h-40'} bg-black/5 dark:bg-white/5 overflow-hidden transition-all duration-500`}>
+        {mainImageUrl ? (
+          <motion.img 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            src={mainImageUrl} 
+            alt={recipe.name} 
+            className="w-full h-full object-cover"
+          />
+        ) : isGeneratingMain ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <Sparkles className="text-primary animate-pulse" size={24} />
+            <span className="text-[10px] font-black uppercase tracking-widest opacity-40">Visualizing...</span>
           </div>
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <ChefHat className="text-primary/20" size={32} />
+          </div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+        
+        {/* Actions overlayed on image */}
+        <div className="absolute top-4 right-4 flex items-center gap-2">
+          <motion.button 
+            whileTap={{ scale: 0.8 }}
+            onClick={onShare}
+            className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-white hover:bg-primary/20 transition-colors"
+          >
+            <Share2 size={18} />
+          </motion.button>
+          <motion.button 
+            whileTap={{ scale: 0.8 }}
+            onClick={onFavorite}
+            className={`w-10 h-10 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center transition-colors ${isFavorite ? 'text-primary' : 'text-white hover:text-primary'}`}
+          >
+            {isFavorite ? <BookmarkCheck size={18} className="fill-primary" /> : <Bookmark size={18} />}
+          </motion.button>
         </div>
-      )}
 
-      <div className="p-8">
-        {!isOpen && (
-          <div className="flex justify-between items-start mb-6">
+        <div className={`absolute bottom-4 left-6 right-6 transition-all ${isOpen ? 'translate-y-0' : 'translate-y-1'}`}>
+          <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-3 px-4 py-2 glass rounded-2xl">
-                <span className="text-[10px] font-black uppercase tracking-widest">{recipe.type}</span>
-              </div>
-              {recipe.cookingTime && (
-                <div className="flex items-center gap-2 px-3 py-2 glass rounded-2xl text-[10px] font-black uppercase tracking-widest text-primary">
-                  <Clock size={12} />
-                  <span>{recipe.cookingTime}</span>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <motion.button 
-                whileTap={{ scale: 0.8 }}
-                onClick={onShare}
-                className="w-10 h-10 rounded-full glass flex items-center justify-center text-gray-400 hover:text-primary transition-colors"
-              >
-                <Share2 size={18} />
-              </motion.button>
-              <motion.button 
-                whileTap={{ scale: 0.8 }}
-                onClick={onFavorite}
-                className={`w-10 h-10 rounded-full glass flex items-center justify-center transition-colors ${isFavorite ? 'text-primary' : 'text-gray-400 hover:text-primary'}`}
-              >
-                {isFavorite ? <BookmarkCheck size={18} className="fill-primary" /> : <Bookmark size={18} />}
-              </motion.button>
-            </div>
-          </div>
-        )}
-
-        {isOpen && (
-           <div className="flex justify-end items-center mb-4 -mt-2">
-              <div className="flex items-center gap-2">
-                <motion.button 
-                  whileTap={{ scale: 0.8 }}
-                  onClick={onShare}
-                  className="w-8 h-8 rounded-full glass flex items-center justify-center text-gray-400 hover:text-primary transition-colors"
-                >
-                  <Share2 size={14} />
-                </motion.button>
-                <motion.button 
-                  whileTap={{ scale: 0.8 }}
-                  onClick={onFavorite}
-                  className={`w-8 h-8 rounded-full glass flex items-center justify-center transition-colors ${isFavorite ? 'text-primary' : 'text-gray-400 hover:text-primary'}`}
-                >
-                  {isFavorite ? <BookmarkCheck size={14} className="fill-primary" /> : <Bookmark size={14} />}
-                </motion.button>
-              </div>
-           </div>
-        )}
-
-        {(!isOpen || isCustomizing) && (
-          <div className="flex flex-col gap-2 mb-2">
-            <div className="flex items-center gap-3">
-              <h3 className="text-2xl font-black leading-tight">{recipe.name}</h3>
+              <span className="text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-primary/80 text-white backdrop-blur-sm">
+                {recipe.type}
+              </span>
               {isFavorite && (
                 <motion.span 
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
-                  className="bg-primary/20 text-primary text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1"
+                  className="bg-green-500/80 text-white text-[8px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 backdrop-blur-sm"
                 >
                   <CheckCircle2 size={10} /> SAVED
                 </motion.span>
               )}
             </div>
-            
+            <h3 className={`${isOpen ? 'text-2xl' : 'text-lg'} font-black text-white leading-tight drop-shadow-lg truncate`}>
+              {recipe.name}
+            </h3>
+          </div>
+        </div>
+      </div>
+
+      <div className="p-8">
+        {!isOpen && (
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-wrap gap-2">
+              {recipe.cookingTime && (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary/10 text-primary text-[10px] font-black uppercase">
+                  <Clock size={12} /> {recipe.cookingTime}
+                </div>
+              )}
+              {recipe.nutrition && (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400 text-[10px] font-black uppercase">
+                  <Star size={10} className="fill-orange-500" /> {recipe.nutrition.calories} kcal
+                </div>
+              )}
+            </div>
+            <div className="text-[10px] font-black uppercase tracking-widest opacity-40">
+              {recipe.ingredients.length} Items
+            </div>
+          </div>
+        )}
+
+        {isOpen && (
+           <div className="flex flex-col gap-2 mb-6">
             {recipe.nutrition && (
               <div className="flex flex-wrap gap-2">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400 text-[10px] font-black">
@@ -1343,7 +1335,7 @@ function RecipeCard({ recipe: initialRecipe, isDarkMode, isFavorite, onFavorite,
                 </div>
               </div>
             )}
-
+            
             {isCustomizing && (
                <div className="flex items-center gap-2 text-primary animate-pulse mt-1">
                  <RefreshCcw size={14} className="animate-spin" />

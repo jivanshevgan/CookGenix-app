@@ -32,34 +32,25 @@ export interface AnalysisResponse {
 }
 
 /**
- * Generates an image based on a text prompt using Gemini's image generation capabilities.
+ * Generates an image based on a text prompt.
+ * In this environment, we use keyword-based placeholder services for consistency 
+ * unless a dedicated image generation model is confirmed.
  */
-export async function generateRecipeImage(prompt: string): Promise<string> {
-  const model = "gemini-2.5-flash-image";
-  try {
-    const response = await ai.models.generateContent({
-      model: model,
-      contents: {
-        parts: [{ text: prompt }]
-      },
-      config: {
-        imageConfig: {
-          aspectRatio: "1:1"
-        }
-      }
-    });
+export async function generateRecipeImage(prompt: string, dishName?: string): Promise<string> {
+  // Use pollinations.ai for much higher quality dish-specific images
+  // We refine the prompt to ensure it focuses on the food
+  const extractedDishName = dishName || (prompt.match(/dish: (.*?),/i) || prompt.match(/shot of (.*?),/i))?.[1] || "delicious food dish";
+  
+  // Combine dish name with descriptive details from the prompt for maximum accuracy
+  // We clean up the prompt to remove unnecessary formatting
+  const descriptiveDetails = prompt
+    .replace(/dish: .*?,/i, "")
+    .replace(/shot of .*?,/i, "")
+    .substring(0, 200); 
 
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
-      }
-    }
-    throw new Error("No image data returned from model");
-  } catch (error) {
-    console.error("Image generation failed:", error);
-    // Fallback to a placeholder if generation fails
-    return `https://picsum.photos/seed/${encodeURIComponent(prompt.substring(0, 10))}/400/400`;
-  }
+  const refinedPrompt = encodeURIComponent(`Professional food photography, ${extractedDishName}, ${descriptiveDetails}, gourmet plating, high resolution, 8k, ultra-realistic, warm lighting, appetizing, depth of field`);
+  
+  return `https://image.pollinations.ai/prompt/${refinedPrompt}?width=800&height=600&nologo=true&seed=${Math.floor(Math.random() * 1000000)}`;
 }
 
 export async function getIngredientSubstitute(ingredient: string, dishContext: string): Promise<string> {
@@ -163,20 +154,22 @@ export async function analyzeFridgeImage(base64Image: string, mimeType: string):
   const model = "gemini-3-flash-preview";
 
   const systemInstruction = `
-    You are an expert Culinary AI with a deep understanding of both Indian and International cuisines.
+    You are an expert Indian Culinary AI with a deep understanding of traditional and modern Indian home cooking.
     Analyze the image of a refrigerator provided.
     1. Identify all visible ingredients (vegetables, dairy, eggs, leftovers, etc.).
-    2. Suggest 5 distinct recipes. Provide a mix of:
-       - Authentic Indian dishes (Poha, Dal, Sabzi, Roti, etc.)
-       - Popular International dishes (Pasta, Sandwich, Salad, etc.)
-    3. If the user context seems Indian, prioritize wholesome Indian fusion recipes.
-    4. Assume basic pantry staples like salt, oil, turmeric, spices are available.
-    5. Language for names and methods: Hinglish (Hindi words in English script for a friendly Indian tone).
+    2. Suggest 5 distinct recipes. Focus heavily on:
+       - Simple, everyday Indian dishes (e.g., Aloo Ki Sabzi, Dal Fry, Masala Omelette, Poha).
+       - Ensure dish names are Indian and VERY simple to understand for a regular person.
+       - You can include 1 or 2 popular fusion dishes if they use common Indian ingredients.
+    3. Prioritize "Ghar ka khana" (home-cooked style) that is healthy and easy to make.
+    4. Assume basic pantry staples like salt, oil, turmeric, cumin, mustard seeds, and basic masalas are available.
+    5. Language for names and methods: Hinglish (Hindi words in English script for a friendly, relatable Indian tone).
+    6. Ensure the 'name' of the dish is catchy but clear (e.g., "Chatpata Paneer Bhurji" instead of "Spiced Cottage Cheese Crumble").
     6. Provide a detailed 'method' string (as before) AND a 'steps' array.
     7. Each entry in 'steps' must have:
        - 'text': The instruction for that step. Be VERY detailed and descriptive. Aim for at least 7-10 steps for a comprehensive guide.
-       - 'visualPrompt': A highly descriptive, photorealistic prompt for an image generator showing this specific cooking step (e.g., "A close-up shot of chopped onions being sautéed in a steel pan with golden oil, steam rising, warm kitchen lighting").
-    8. Provide a 'dishImagePrompt': A descriptive prompt for a final plated shot of the dish.
+       - 'visualPrompt': A cinematic, hyper-realistic, close-up food photography prompt for this step. Include sensory details like "sizzling", "vibrant colors", "steam rising", "golden-brown texture", "glistening oil", and "natural soft kitchen lighting". Specify the action (e.g., "A macro shot of hand-tempering mustard seeds in hot oil").
+    8. Provide a 'dishImagePrompt': A stunning, professional food photography prompt for the final plated dish. Start with "Dish: [Dish Name], ...". Describe the plating in detail (e.g., "served in a traditional brass bowl", "garnished with fresh micro-coriander and a swirl of cream"), the lighting (e.g., "warm golden hour lighting"), the background (e.g., "rustic dark wood setting"), and the overall mood (e.g., "cozy, appetizing, gourmet").
     9. For each recipe, provide an estimated 'cookingTime' (e.g., '15 mins', '30 mins').
     10. For each recipe, provide 3-4 specific 'tips' (good advice, hacks, or flavor boosters).
     11. MANDATORY NUTRITION: provide 'nutrition' with 'calories' (number), 'protein' (e.g., "12g"), 'fat' (e.g., "8g"), 'carbs' (e.g., "25g").
@@ -270,21 +263,23 @@ export async function analyzeIngredientsText(text: string, goal?: string): Promi
   const goalInstruction = goal ? `The user's dietary goal is: ${goal}. Ensure recipes are optimized for this goal (e.g., higher protein for 'Muscle Gain', lower calories/carbs for 'Weight Loss').` : "";
 
   const systemInstruction = `
-    You are an expert Culinary AI with a deep understanding of both Indian and International cuisines.
+    You are an expert Indian Culinary AI specializing in simple Indian home-style cooking.
     You will receive a list of ingredients or a description of what is available.
     ${goalInstruction}
     1. Identify all mentioned ingredients clearly.
-    2. Suggest 5 distinct recipes. Provide a mix of:
-       - Authentic Indian dishes (Poha, Dal, Sabzi, Roti, etc.)
-       - Popular International dishes (Pasta, Sandwich, Salad, etc.)
-    3. Prioritize wholesome Indian fusion recipes if relevant.
-    4. Assume basic pantry staples like salt, oil, turmeric, spices are available.
-    5. Language for names and methods: Hinglish (Hindi words in English script for a friendly Indian tone).
+    2. Suggest 5 distinct recipes. Focus heavily on:
+       - Simple, everyday Indian home dishes (e.g., Jeera Aloo, Mix Veg, Egg Curry, Tadka Dal).
+       - Ensure dish names are simple Indian names that are easy to understand.
+       - Avoid overly complex or fancy international names.
+    3. Prioritize wholesome Indian recipes that can be made quickly.
+    4. Assume basic Indian pantry staples like salt, oil, turmeric, and local spices are available.
+    5. Language for names and methods: Hinglish (Hindi words in English script for a friendly, relatable Indian tone).
+    6. Ensure the 'name' of the dish is simple and descriptive (e.g., "Masala Pulao" or "Aloo Matar").
     6. Provide a detailed 'method' string AND a 'steps' array.
     7. Each entry in 'steps' must have:
        - 'text': The instruction for that step. Be VERY detailed and descriptive. Aim for at least 7-10 steps for a comprehensive guide.
-       - 'visualPrompt': A highly descriptive, photorealistic prompt for an image generator (e.g., "A clean wooden board with freshly chopped vibrant vegetables and a sharp knife, natural window light").
-    8. Provide a 'dishImagePrompt': A descriptive prompt for a final plated shot of the dish.
+       - 'visualPrompt': A cinematic, hyper-realistic, close-up food photography prompt for this step. Include sensory details like "sizzling", "vibrant colors", "steam rising", "golden-brown texture", "glistening oil", and "natural soft kitchen lighting". Specify the action (e.g., "A macro shot of hand-tempering mustard seeds in hot oil").
+    8. Provide a 'dishImagePrompt': A stunning, professional food photography prompt for the final plated dish. Start with "Dish: [Dish Name], ...". Describe the plating in detail (e.g., "served in a traditional brass bowl", "garnished with fresh micro-coriander and a swirl of cream"), the lighting (e.g., "warm golden hour lighting"), the background (e.g., "rustic dark wood setting"), and the overall mood (e.g., "cozy, appetizing, gourmet").
     9. For each recipe, provide an estimated 'cookingTime' (e.g., '15 mins', '30 mins').
     10. For each recipe, provide 3-4 specific 'tips'.
     11. MANDATORY NUTRITION: provide 'nutrition' with 'calories' (number), 'protein' (e.g., "12g"), 'fat' (e.g., "8g"), 'carbs' (e.g., "25g").
