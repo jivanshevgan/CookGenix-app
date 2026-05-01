@@ -31,6 +31,7 @@ import {
   getDocs,
   setDoc,
   updateDoc,
+  getDoc,
   serverTimestamp
 } from "firebase/firestore";
 import { db, auth } from "./lib/firebase";
@@ -400,8 +401,8 @@ export default function App() {
           // User Tracking: Save/Update user profile in Firestore
           try {
             const userRef = doc(db, "users", firebaseUser.uid);
-            const userDoc = await getDocs(query(collection(db, "users"), where("uid", "==", firebaseUser.uid)));
-            const isNew = userDoc.empty;
+            const userDocSnap = await getDoc(userRef);
+            const exists = userDocSnap.exists();
             
             await setDoc(userRef, {
               uid: firebaseUser.uid,
@@ -409,8 +410,14 @@ export default function App() {
               name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || "Unknown",
               lastLogin: new Date().toISOString(),
               updatedAt: serverTimestamp(),
-              ...(isNew ? { createdAt: new Date().toISOString() } : {})
+              ...(!exists ? { createdAt: new Date().toISOString() } : {})
             }, { merge: true });
+
+            // Log the login activity
+            logActivity("user_login", { 
+              method: firebaseUser.providerData[0]?.providerId || "unknown",
+              email: firebaseUser.email 
+            });
           } catch (err) {
             console.error("User tracking failed:", err);
           }
@@ -812,39 +819,78 @@ export default function App() {
                     <motion.div key="ov" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         <div className="space-y-6">
-                          <h4 className="text-sm font-black uppercase tracking-[0.2em] opacity-40 flex items-center gap-2 italic">
-                             <UserIcon size={14} /> Platform Metrics
-                          </h4>
-                          <div className="grid grid-cols-1 gap-4">
-                            <div className="p-8 glass rounded-[40px] bg-primary/5 border border-primary/20 flex flex-col items-center justify-center text-center relative overflow-hidden group">
-                               <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:scale-110 transition-transform">
-                                 <Users size={120} />
-                               </div>
-                               <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4 text-primary">
-                                 <Users size={32} />
-                               </div>
-                               <h3 className="text-6xl font-black">{adminData?.users?.length || 0}</h3>
-                               <p className="text-[10px] font-black uppercase tracking-[0.4em] opacity-40 mt-3 italic">Total Registered Foodies</p>
-                               <div className="mt-8 flex gap-3">
-                                 <span className="px-4 py-2 bg-green-500/10 text-green-500 rounded-2xl text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 border border-green-500/20">
-                                   <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" /> Live
-                                 </span>
-                                 <span className="px-4 py-2 bg-primary/10 text-primary rounded-2xl text-[9px] font-black uppercase tracking-widest border border-primary/20">
-                                   Cloud Sync
-                                 </span>
-                               </div>
+                          <div className="flex justify-between items-end">
+                            <div>
+                              <h4 className="text-sm font-black uppercase tracking-[0.2em] opacity-40 flex items-center gap-2 italic">
+                                 <UserIcon size={14} /> Registered Foodies
+                              </h4>
+                              <p className="text-[10px] font-bold opacity-30">Full sync of all platform accounts</p>
                             </div>
-                            
-                            <div className="grid grid-cols-2 gap-4">
-                               <div className="p-6 glass rounded-[32px] border border-white/5 space-y-2">
-                                 <p className="text-3xl font-black text-secondary">{adminData?.recipes?.length || 0}</p>
-                                 <p className="text-[9px] font-black uppercase opacity-40 tracking-widest italic">Curated Recipes</p>
-                               </div>
-                               <div className="p-6 glass rounded-[32px] border border-white/5 space-y-2">
-                                 <p className="text-3xl font-black text-green-500">{adminData?.logs?.length || 0}</p>
-                                 <p className="text-[9px] font-black uppercase opacity-40 tracking-widest italic">System Events</p>
-                               </div>
+                            <span className="text-[10px] font-black uppercase text-primary bg-primary/10 px-3 py-1 rounded-full">
+                              {adminData?.users?.length || 0} Total
+                            </span>
+                          </div>
+                          
+                          <div className="glass rounded-[40px] border border-white/10 overflow-hidden flex flex-col max-h-[500px]">
+                            <div className="p-4 bg-black/5 dark:bg-white/5 border-b border-white/10 grid grid-cols-2 text-[10px] font-black uppercase tracking-widest opacity-40">
+                              <span>User Identity</span>
+                              <span className="text-right">Platform Status</span>
                             </div>
+                            <div className="overflow-y-auto custom-scrollbar flex-1">
+                              {adminData?.users?.map((u: any, i: number) => (
+                                <div key={i} className="p-4 border-b border-white/5 hover:bg-white/5 transition-colors flex justify-between items-center group">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-black text-xs">
+                                      {u.name?.charAt(0) || "U"}
+                                    </div>
+                                    <div>
+                                      <p className="text-xs font-black group-hover:text-primary transition-colors">{u.name}</p>
+                                      <p className="text-[9px] opacity-40 font-mono">{u.email}</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-col items-end gap-1">
+                                    <div className="flex gap-1">
+                                      <span className={`text-[7px] font-black uppercase px-2 py-0.5 rounded-full ${u.role === 'admin' ? 'bg-primary text-white' : 'bg-black/10 dark:bg-white/10 opacity-60'}`}>
+                                        {u.role || 'user'}
+                                      </span>
+                                      <span className={`text-[7px] font-black uppercase px-2 py-0.5 rounded-full ${u.status === 'suspended' ? 'bg-red-500 text-white' : 'bg-green-500/10 text-green-500 border border-green-500/20'}`}>
+                                        {u.status || 'active'}
+                                      </span>
+                                    </div>
+                                    <p className="text-[8px] font-bold opacity-30 italic">Seen {new Date(u.lastLogin || Date.now()).toLocaleDateString()}</p>
+                                  </div>
+                                </div>
+                              ))}
+                              {adminData?.users?.length === 0 && (
+                                <div className="p-12 text-center opacity-30 italic text-xs">No foodies registered yet.</div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                             <div className="p-6 glass rounded-[32px] border border-white/5 space-y-2 relative overflow-hidden group">
+                               <div className="absolute -top-4 -right-4 opacity-5 group-hover:rotate-12 transition-transform">
+                                 <Users size={80} />
+                               </div>
+                               <p className="text-3xl font-black text-blue-500">
+                                 {adminData?.logs?.filter(l => l.action === 'user_login' && new Date(l.timestamp) > new Date(Date.now() - 86400000)).length || 0}
+                               </p>
+                               <p className="text-[9px] font-black uppercase opacity-40 tracking-widest italic">Logins (24h)</p>
+                             </div>
+                             <div className="p-6 glass rounded-[32px] border border-white/5 space-y-2 relative overflow-hidden group">
+                               <div className="absolute -top-4 -right-4 opacity-5 group-hover:rotate-12 transition-transform">
+                                 <UtensilsCrossed size={80} />
+                               </div>
+                               <p className="text-3xl font-black text-secondary">{adminData?.recipes?.length || 0}</p>
+                               <p className="text-[9px] font-black uppercase opacity-40 tracking-widest italic">Curated Recipes</p>
+                             </div>
+                             <div className="p-6 glass rounded-[32px] border border-white/5 space-y-2 relative overflow-hidden group">
+                               <div className="absolute -top-4 -right-4 opacity-5 group-hover:rotate-12 transition-transform">
+                                 <Sparkles size={80} />
+                               </div>
+                               <p className="text-3xl font-black text-green-500">{adminData?.logs?.length || 0}</p>
+                               <p className="text-[9px] font-black uppercase opacity-40 tracking-widest italic">System Events</p>
+                             </div>
                           </div>
                         </div>
 
@@ -977,6 +1023,10 @@ export default function App() {
                                         </div>
                                     </div>
                                     <div className="flex flex-col gap-1.5">
+                                      <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 rounded-xl border border-primary/10 w-fit">
+                                        <Clock size={10} className="text-primary" />
+                                        <span className="text-[8px] font-black uppercase tracking-widest opacity-60">Last Login: {u.lastLogin ? new Date(u.lastLogin).toLocaleString() : 'Never'}</span>
+                                      </div>
                                       <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 rounded-xl border border-primary/10 w-fit">
                                         <Mail size={12} className="text-primary" />
                                         <p className="text-[11px] font-black text-primary uppercase tracking-widest leading-none">{u.email || "No Email Provided"}</p>
@@ -1182,7 +1232,11 @@ export default function App() {
                                     <p className="text-[8px] opacity-30 truncate w-20">{l.uid}</p>
                                   </td>
                                   <td className="p-4">
-                                    <span className={`px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest ${l.action.includes('error') ? 'bg-red-500/10 text-red-500' : 'bg-primary/10 text-primary'}`}>
+                                    <span className={`px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest ${
+                                      l.action.includes('error') ? 'bg-red-500/10 text-red-500' : 
+                                      l.action === 'user_login' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
+                                      'bg-primary/10 text-primary'
+                                    }`}>
                                       {l.action}
                                     </span>
                                   </td>
