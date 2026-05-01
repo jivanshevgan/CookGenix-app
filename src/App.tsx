@@ -5,7 +5,7 @@ import {
   CheckCircle2, ChevronRight, Info, X,
   Moon, Sun, Heart, Share2, Home, 
   Plus, Star, Clock, LogOut, User as UserIcon, Bookmark, BookmarkCheck,
-  Image as ImageIcon, Mic, MicOff, RotateCcw
+  Image as ImageIcon, Mic, MicOff, RotateCcw, Search, Mail, Calendar, ArrowRight, Copy, ShieldCheck
 } from "lucide-react";
 import { 
   analyzeFridgeImage, 
@@ -57,8 +57,13 @@ export default function App() {
     };
   }, []);
 
-  const [adminData, setAdminData] = useState<{ users: any[], feedback: any[] } | null>(null);
+  const [adminData, setAdminData] = useState<{ users: any[], feedback: any[], recipes: any[] } | null>(null);
   const [loadingAdmin, setLoadingAdmin] = useState(false);
+  const [adminTab, setAdminTab] = useState<string>("Overview");
+  const [adminSearch, setAdminSearch] = useState("");
+  const [adminTypeFilter, setAdminTypeFilter] = useState("All");
+  const [adminRatingFilter, setAdminRatingFilter] = useState(0);
+  const [selectedAdminUser, setSelectedAdminUser] = useState<any>(null);
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [dietaryGoal, setDietaryGoal] = useState<string>("Balanced");
 
@@ -95,19 +100,21 @@ export default function App() {
     if (!isAdmin || !auth.currentUser) return;
     setLoadingAdmin(true);
     try {
-      const token = await auth.currentUser.getIdToken();
-      const [uRes, fRes] = await Promise.all([
-        fetch(`${window.location.origin}/api/admin/export-users`, { headers: { "Authorization": `Bearer ${token}` } }),
-        fetch(`${window.location.origin}/api/admin/export-feedback`, { headers: { "Authorization": `Bearer ${token}` } })
+      // Fetch directly from Firestore (Bypassing server endpoints)
+      const [uSnap, fSnap, rSnap] = await Promise.all([
+        getDocs(collection(db, "users")),
+        getDocs(collection(db, "feedback")),
+        getDocs(collection(db, "recipes"))
       ]);
-      if (uRes.ok && fRes.ok) {
-        setAdminData({
-          users: await uRes.json(),
-          feedback: await fRes.json()
-        });
-      }
+
+      setAdminData({
+        users: uSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+        feedback: fSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+        recipes: rSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+      });
     } catch (e) {
       console.error("Admin fetch failed", e);
+      setError("Admin access failed. Check if you are truly logged in as admin.");
     } finally {
       setLoadingAdmin(false);
     }
@@ -219,14 +226,30 @@ export default function App() {
   // Authentication and Real-time Data Sync
   useEffect(() => {
     try {
-      const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
         if (firebaseUser) {
-          setUser({
+          const userData = {
             uid: firebaseUser.uid,
             email: firebaseUser.email,
             name: firebaseUser.displayName || firebaseUser.email
-          });
+          };
+          setUser(userData);
           setAuthStatus("authenticated");
+
+          // User Tracking: Save/Update user profile in Firestore
+          try {
+            const userRef = doc(db, "users", firebaseUser.uid);
+            await setDoc(userRef, {
+              user_id: firebaseUser.uid,
+              uid: firebaseUser.uid,
+              email: firebaseUser.email,
+              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || "Unknown",
+              lastLogin: new Date().toISOString(),
+              updatedAt: serverTimestamp()
+            }, { merge: true });
+          } catch (err) {
+            console.error("User tracking failed:", err);
+          }
         } else {
           setUser(null);
           setAuthStatus("unauthenticated");
@@ -574,95 +597,403 @@ export default function App() {
           {view === 'admin' ? (
             <motion.div
               key="admin"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-12"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="space-y-12 pb-20"
             >
-              <div className="text-center space-y-4">
-                <h2 className="text-4xl font-black uppercase tracking-tight">Admin <span className="text-primary">Dashboard</span></h2>
-                <div className="flex justify-center gap-4">
-                  <button 
-                    onClick={() => {
-                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(adminData?.users, null, 2));
-                      const downloadAnchorNode = document.createElement('a');
-                      downloadAnchorNode.setAttribute("href", dataStr);
-                      downloadAnchorNode.setAttribute("download", "users_backup.json");
-                      document.body.appendChild(downloadAnchorNode);
-                      downloadAnchorNode.click();
-                      downloadAnchorNode.remove();
-                    }}
-                    className="text-[10px] font-black uppercase tracking-widest bg-primary text-white px-4 py-2 rounded-full shadow-lg hover:scale-105 transition-transform"
-                  >
-                    Download Users
-                  </button>
-                  <button 
-                    onClick={() => {
-                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(adminData?.feedback, null, 2));
-                      const downloadAnchorNode = document.createElement('a');
-                      downloadAnchorNode.setAttribute("href", dataStr);
-                      downloadAnchorNode.setAttribute("download", "feedback_backup.json");
-                      document.body.appendChild(downloadAnchorNode);
-                      downloadAnchorNode.click();
-                      downloadAnchorNode.remove();
-                    }}
-                    className="text-[10px] font-black uppercase tracking-widest bg-gray-900 text-white px-4 py-2 rounded-full shadow-lg hover:scale-105 transition-transform"
-                  >
-                    Download Feedback
-                  </button>
-                  <button 
-                    onClick={fetchAdminData}
-                    className="p-2 rounded-full bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
-                  >
-                    <RefreshCcw size={16} className={loadingAdmin ? "animate-spin" : ""} />
-                  </button>
+              <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+                <div className="text-left">
+                  <h2 className="text-4xl font-black uppercase tracking-tight">Admin <span className="text-primary italic">Command</span></h2>
+                  <p className="text-xs font-bold uppercase opacity-40 tracking-widest mt-1">Platform-wide Insights & Activity</p>
                 </div>
-                <p className="text-gray-500 font-medium">
-                  {adminData ? `Last updated: ${new Date().toLocaleTimeString()}` : "Real-time view of system data."}
-                </p>
+                <div className="flex gap-2 bg-black/5 dark:bg-white/5 p-1 rounded-2xl">
+                  {['Overview', 'Users', 'Recipes', 'Feedback'].map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setAdminTab(tab)}
+                      className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminTab === tab ? 'bg-primary text-white shadow-lg' : 'opacity-50 hover:opacity-100'}`}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Stats Bar */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  { label: 'Total Users', value: adminData?.users?.length || 0, icon: <UserIcon size={16} /> },
+                  { label: 'Saved Recipes', value: adminData?.recipes?.length || 0, icon: <Bookmark size={16} /> },
+                  { label: 'Feedback', value: adminData?.feedback?.length || 0, icon: <Star size={16} /> },
+                  { label: 'System Health', value: 'Live', icon: <CheckCircle2 size={16} />, color: 'text-green-500' }
+                ].map((stat, i) => (
+                  <div key={i} className="p-6 glass rounded-3xl border border-white/10">
+                    <div className={`p-2 bg-primary/10 rounded-xl w-fit mb-3 ${stat.color || 'text-primary'}`}>{stat.icon}</div>
+                    <p className="text-2xl font-black">{stat.value}</p>
+                    <p className="text-[10px] font-bold uppercase opacity-40 tracking-widest">{stat.label}</p>
+                  </div>
+                ))}
               </div>
 
               {loadingAdmin ? (
-                <div className="flex justify-center py-20"><RefreshCcw className="animate-spin text-primary" /></div>
-              ) : (
-                <div className="grid gap-12">
-                  <section className="space-y-6">
-                    <h3 className="text-2xl font-bold flex items-center gap-3"><UserIcon className="text-primary" /> Tracked Users ({adminData?.users?.length || 0})</h3>
-                    <div className="grid gap-4">
-                      {adminData?.users?.map((u: any, i: number) => (
-                        <div key={i} className="p-6 glass rounded-2xl flex flex-col md:flex-row justify-between md:items-center gap-4">
-                          <div>
-                            <p className="font-extrabold text-lg">{u.name}</p>
-                            <p className="text-sm opacity-60 font-mono">{u.email}</p>
-                          </div>
-                          <div className="flex flex-col items-end text-right">
-                            <p className="text-[10px] font-black uppercase opacity-40">Last Logged In</p>
-                            <p className="text-xs font-bold">{new Date(u.lastLogin || u.createdAt).toLocaleString()}</p>
-                            <p className="text-xs text-primary mt-1">{u.favorites?.length || 0} Favorites</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-
-                  <section className="space-y-6">
-                    <h3 className="text-2xl font-bold flex items-center gap-3"><Star className="text-yellow-500" /> User Feedback ({adminData?.feedback?.length || 0})</h3>
-                    <div className="grid gap-4">
-                      {adminData?.feedback?.map((f: any, i: number) => (
-                        <div key={i} className="p-6 glass rounded-2xl space-y-3">
-                          <div className="flex justify-between items-center">
-                            <div className="flex text-yellow-500">
-                              {[...Array(5)].map((_, i) => <Star key={i} size={14} fill={i < f.rating ? "currentColor" : "none"} />)}
-                            </div>
-                            <span className="text-[10px] font-mono opacity-40">{new Date(f.timestamp).toLocaleString()}</span>
-                          </div>
-                          <p className="font-medium text-sm leading-relaxed italic">"{f.message || "No message left"}"</p>
-                          <p className="text-[10px] font-black uppercase text-primary tracking-widest">{f.email}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
+                <div className="flex flex-col items-center justify-center py-20 gap-4">
+                  <RefreshCcw className="animate-spin text-primary" size={40} />
+                  <p className="text-xs font-black uppercase tracking-widest opacity-40">Syncing Cloud Data...</p>
                 </div>
+              ) : (
+                <AnimatePresence mode="wait">
+                  {adminTab === 'Overview' && (
+                    <motion.div key="ov" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="space-y-6">
+                          <h4 className="text-sm font-black uppercase tracking-[0.2em] opacity-40 flex items-center gap-2">
+                             <Clock size={14} /> Recent Logins
+                          </h4>
+                          <div className="space-y-3">
+                            {adminData?.users?.slice(0, 5).map((u: any, i: number) => (
+                              <div key={i} className="p-4 glass rounded-2xl flex justify-between items-center">
+                                <div>
+                                  <p className="font-extrabold text-sm">{u.name}</p>
+                                  <p className="text-[10px] opacity-50">{u.email}</p>
+                                </div>
+                                <span className="text-[10px] font-bold opacity-30">{new Date(u.lastLogin).toLocaleTimeString()}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="space-y-6">
+                          <h4 className="text-sm font-black uppercase tracking-[0.2em] opacity-40 flex items-center gap-2">
+                             <RotateCcw size={14} /> Latest Saved Recipes
+                          </h4>
+                          <div className="space-y-3">
+                            {adminData?.recipes?.slice(0, 5).map((r: any, i: number) => (
+                              <div key={i} className="p-4 glass rounded-2xl flex justify-between items-center">
+                                <p className="font-extrabold text-sm truncate max-w-[150px]">{r.name}</p>
+                                <div className="text-right">
+                                  <p className="text-[10px] font-black text-primary uppercase">{r.type}</p>
+                                  <p className="text-[8px] opacity-30">{new Date(r.savedAt).toLocaleDateString()}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex justify-center gap-4 pt-8">
+                        <button onClick={fetchAdminData} className="p-3 bg-primary/20 text-primary rounded-2xl hover:bg-primary/30 transition-all flex items-center gap-2 text-xs font-black uppercase">
+                          <RefreshCcw size={14} /> Refresh Logs
+                        </button>
+                        <button 
+                          onClick={() => {
+                            const fullData = { users: adminData?.users, feedback: adminData?.feedback, recipes: adminData?.recipes, exportedAt: new Date().toISOString() };
+                            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(fullData, null, 2));
+                            const downloadAnchorNode = document.createElement('a');
+                            downloadAnchorNode.setAttribute("href", dataStr);
+                            downloadAnchorNode.setAttribute("download", "system_full_backup.json");
+                            downloadAnchorNode.click();
+                          }}
+                          className="p-3 bg-black text-white dark:bg-white dark:text-black rounded-2xl hover:scale-105 transition-all text-xs font-black uppercase"
+                        >
+                          Full Database Backup
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {adminTab === 'Users' && (
+                    <motion.div key="us" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+                      <div className="flex flex-col md:flex-row gap-4 items-center">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-primary opacity-50" size={18} />
+                          <input 
+                            type="text" 
+                            placeholder="Search by name, email, or UID..."
+                            value={adminSearch}
+                            onChange={(e) => setAdminSearch(e.target.value)}
+                            className="w-full pl-12 pr-4 py-4 glass rounded-2xl border border-transparent focus:border-primary outline-none transition-all font-bold text-sm"
+                          />
+                        </div>
+                        <div className="p-3 glass rounded-2xl flex items-center gap-2">
+                           <UserIcon size={14} className="text-primary" />
+                           <span className="text-[10px] font-black uppercase tracking-widest opacity-60">Total: {adminData?.users?.length || 0} Users</span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3">
+                        {(adminData?.users || [])
+                          .filter(u => 
+                            u.name?.toLowerCase().includes(adminSearch.toLowerCase()) || 
+                            u.email?.toLowerCase().includes(adminSearch.toLowerCase()) ||
+                            u.uid?.toLowerCase().includes(adminSearch.toLowerCase())
+                          )
+                          .map((u: any, i: number) => {
+                            const userRecipes = adminData?.recipes?.filter(r => r.user_id === u.uid) || [];
+                            const userFeedback = adminData?.feedback?.filter(f => f.email === u.email) || [];
+                            const isGoogleUser = u.email === u.name; // Simple heuristic or we could check providerData
+                            
+                            return (
+                              <div 
+                                key={i} 
+                                onClick={() => {
+                                  setSelectedAdminUser(u);
+                                  setAdminTab('User Focus');
+                                }}
+                                className="p-4 glass rounded-[24px] flex flex-col md:flex-row justify-between md:items-center gap-4 group cursor-pointer hover:bg-primary/5 transition-all border border-transparent hover:border-primary/20"
+                              >
+                                <div className="flex items-center gap-4">
+                                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-black text-sm">
+                                    {u.name?.[0].toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-black text-sm">{u.name}</p>
+                                      <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${userFeedback.length > 0 ? 'bg-yellow-500/10 text-yellow-600' : 'bg-gray-500/10 text-gray-500'}`}>
+                                        {userFeedback.length > 0 ? 'Reviewer' : 'Silent'}
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-col gap-1.5 mt-1.5">
+                                      <div className="flex items-center gap-2 px-2 py-1 bg-primary/[0.03] rounded-lg border border-primary/5 w-fit">
+                                        <Mail size={10} className="text-primary opacity-60" />
+                                        <p className="text-[9px] font-black text-primary uppercase tracking-wider leading-none">{u.email}</p>
+                                        <div className="w-[1px] h-3 bg-primary/10 ml-1" />
+                                        <button 
+                                          onClick={(e) => { 
+                                            e.stopPropagation(); 
+                                            navigator.clipboard.writeText(u.email);
+                                          }}
+                                          title="Copy Login ID"
+                                          className="p-1 hover:bg-primary/10 rounded transition-colors"
+                                        >
+                                          <Copy size={8} className="text-primary opacity-40 group-hover:opacity-100" />
+                                        </button>
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        <ShieldCheck size={8} className="text-green-500" />
+                                        <p className="text-[8px] font-bold opacity-30 uppercase tracking-tight">Identity: Firebase Verified</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                
+                                <div className="flex gap-4 sm:gap-12 items-center justify-between md:justify-end">
+                                  <div className="text-center md:text-right">
+                                    <p className="text-[8px] font-black uppercase opacity-30">Collections</p>
+                                    <p className="text-xs font-black text-primary">{userRecipes.length} Saved</p>
+                                  </div>
+                                  <div className="text-center md:text-right">
+                                    <p className="text-[8px] font-black uppercase opacity-30">Last Seen</p>
+                                    <p className="text-xs font-bold">{new Date(u.lastLogin || u.createdAt).toLocaleDateString()}</p>
+                                  </div>
+                                  <div className="p-2 rounded-full bg-primary/10 text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <ChevronRight size={16} />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {adminTab === 'User Focus' && selectedAdminUser && (
+                    <motion.div key="focus" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-8">
+                       <button 
+                        onClick={() => {
+                          setSelectedAdminUser(null);
+                          setAdminTab('Users');
+                        }}
+                        className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest opacity-50 hover:opacity-100 transition-opacity"
+                       >
+                         <ArrowRight size={14} className="rotate-180" /> Back to User List
+                       </button>
+
+                       <div className="p-8 glass rounded-[40px] border border-primary/20 bg-primary/5 flex flex-col md:flex-row gap-8 items-center text-center md:text-left">
+                          <div className="w-24 h-24 rounded-[32px] bg-primary text-white flex items-center justify-center text-4xl font-black shadow-2xl">
+                            {selectedAdminUser.name?.[0].toUpperCase()}
+                          </div>
+                          <div className="flex-1 space-y-2">
+                             <h3 className="text-3xl font-black">{selectedAdminUser.name}</h3>
+                             <div className="flex flex-wrap justify-center md:justify-start gap-4">
+                               <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-xl text-primary border border-primary/10">
+                                 <Mail size={14} />
+                                 <span className="text-sm font-black uppercase tracking-tight">{selectedAdminUser.email}</span>
+                               </div>
+                               <p className="text-xs font-bold opacity-60 flex items-center gap-1 bg-black/5 dark:bg-white/5 px-3 py-1.5 rounded-xl"><Calendar size={12} /> Joined {new Date(selectedAdminUser.createdAt || Date.now()).toLocaleDateString()}</p>
+                             </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="p-4 bg-white/10 dark:bg-black/20 rounded-3xl text-center min-w-[100px]">
+                              <p className="text-2xl font-black text-primary">{adminData?.recipes?.filter(r => r.user_id === selectedAdminUser.uid).length || 0}</p>
+                              <p className="text-[8px] font-black uppercase opacity-40">Saved</p>
+                            </div>
+                            <div className="p-4 bg-white/10 dark:bg-black/20 rounded-3xl text-center min-w-[100px]">
+                              <p className="text-xs font-black opacity-30 break-all leading-none">{selectedAdminUser.uid.substring(0, 8)}...</p>
+                              <p className="text-[8px] font-black uppercase opacity-40 mt-2">UID</p>
+                            </div>
+                          </div>
+                       </div>
+
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <h4 className="text-xs font-black uppercase tracking-widest opacity-40 flex items-center gap-2">
+                               <Bookmark size={14} /> Saved Recipes
+                            </h4>
+                            <div className="space-y-4">
+                              {adminData?.recipes?.filter(r => r.user_id === selectedAdminUser.uid).map((r: any, i: number) => (
+                                <div key={i} className="p-5 glass rounded-3xl border border-white/5">
+                                  <div className="flex justify-between items-start mb-2">
+                                    <p className="font-extrabold text-sm">{r.name}</p>
+                                    <span className="text-[8px] font-black uppercase text-primary bg-primary/10 px-2 py-0.5 rounded-lg">{r.type}</span>
+                                  </div>
+                                  <p className="text-[10px] opacity-50 line-clamp-2 leading-relaxed">{r.ingredients?.join(", ")}</p>
+                                </div>
+                              ))}
+                              {adminData?.recipes?.filter(r => r.user_id === selectedAdminUser.uid).length === 0 && (
+                                <p className="text-center py-8 text-xs font-bold opacity-30 italic">No recipes saved yet.</p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="space-y-6">
+                            <h4 className="text-xs font-black uppercase tracking-widest opacity-40 flex items-center gap-2">
+                               <Star size={14} /> Submitted Feedback
+                            </h4>
+                            <div className="space-y-4">
+                              {adminData?.feedback?.filter(f => f.email === selectedAdminUser.email || f.user_id === selectedAdminUser.uid).map((f: any, i: number) => (
+                                <div key={i} className="p-6 glass rounded-3xl border border-yellow-500/10">
+                                  <div className="flex justify-between items-center mb-3">
+                                    <div className="flex gap-0.5 text-primary">
+                                      {[...Array(5)].map((_, j) => <Star key={j} size={10} fill={j < f.rating ? "currentColor" : "none"} />)}
+                                    </div>
+                                    <span className="text-[8px] font-bold opacity-30">{new Date(f.timestamp).toLocaleDateString()}</span>
+                                  </div>
+                                  <p className="text-xs font-bold italic leading-relaxed opacity-80">"{f.message}"</p>
+                                </div>
+                              ))}
+                              {adminData?.feedback?.filter(f => f.email === selectedAdminUser.email || f.user_id === selectedAdminUser.uid).length === 0 && (
+                                <p className="text-center py-8 text-xs font-bold opacity-30 italic">No feedback provided.</p>
+                              )}
+                            </div>
+                          </div>
+                       </div>
+                    </motion.div>
+                  )}
+
+                  {adminTab === 'Recipes' && (
+                    <motion.div key="re" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+                      <div className="flex flex-col md:flex-row gap-4">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-primary opacity-50" size={18} />
+                          <input 
+                            type="text" 
+                            placeholder="Search recipes or ingredients..."
+                            value={adminSearch}
+                            onChange={(e) => setAdminSearch(e.target.value)}
+                            className="w-full pl-12 pr-4 py-4 glass rounded-2xl border border-transparent focus:border-primary outline-none transition-all font-bold text-sm"
+                          />
+                        </div>
+                        <div className="flex gap-2 p-1 bg-black/5 dark:bg-white/5 rounded-2xl overflow-x-auto no-scrollbar">
+                          {['All', 'Veg', 'Non-Veg', 'Eggitarian', 'Balanced'].map((f) => (
+                            <button
+                              key={f}
+                              onClick={() => setAdminTypeFilter(f)}
+                              className={`px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${adminTypeFilter === f ? 'bg-primary text-white' : 'opacity-40 hover:opacity-100'}`}
+                            >
+                              {f}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {(adminData?.recipes || [])
+                          .filter(r => (adminTypeFilter === 'All' || r.type === adminTypeFilter) && 
+                                       (r.name?.toLowerCase().includes(adminSearch.toLowerCase()) || r.ingredients?.some((i: string) => i.toLowerCase().includes(adminSearch.toLowerCase()))))
+                          .map((r: any, i: number) => (
+                          <div key={i} className="p-5 glass rounded-3xl space-y-4 relative overflow-hidden group border border-transparent hover:border-primary/20 transition-all">
+                            <div className="flex justify-between items-start">
+                              <h5 className="font-extrabold pr-8 leading-tight">{r.name}</h5>
+                              <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-primary/10 text-primary">
+                                {r.type}
+                              </span>
+                            </div>
+                            <div className="flex gap-2 flex-wrap">
+                              {r.ingredients?.slice(0, 4).map((ing: string, j: number) => (
+                                <span key={j} className="text-[8px] font-bold opacity-50 px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5 uppercase">
+                                  {ing}
+                                </span>
+                              ))}
+                              {r.ingredients?.length > 4 && <span className="text-[8px] font-bold opacity-30 italic">+{r.ingredients.length - 4} more</span>}
+                            </div>
+                            <div className="pt-3 border-t border-black/5 dark:border-white/5 flex justify-between items-center text-[10px]">
+                              <span className="opacity-40 font-bold uppercase truncate max-w-[120px]">UID: {r.user_id}</span>
+                              <span className="font-black text-primary">{new Date(r.savedAt).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {adminTab === 'Feedback' && (
+                    <motion.div key="fe" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+                      <div className="flex flex-col md:flex-row gap-4">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-primary opacity-50" size={18} />
+                          <input 
+                            type="text" 
+                            placeholder="Search feedback messages or emails..."
+                            value={adminSearch}
+                            onChange={(e) => setAdminSearch(e.target.value)}
+                            className="w-full pl-12 pr-4 py-4 glass rounded-2xl border border-transparent focus:border-primary outline-none transition-all font-bold text-sm"
+                          />
+                        </div>
+                        <div className="flex gap-2 p-1 bg-black/5 dark:bg-white/5 rounded-2xl">
+                          {[0, 5, 4, 3, 2, 1].map((rating) => (
+                            <button
+                              key={rating}
+                              onClick={() => setAdminRatingFilter(rating)}
+                              className={`w-10 h-10 rounded-xl text-[10px] font-black transition-all flex items-center justify-center ${adminRatingFilter === rating ? 'bg-primary text-white' : 'opacity-40 hover:opacity-100'}`}
+                            >
+                              {rating === 0 ? 'ALL' : rating}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-4">
+                        {(adminData?.feedback || [])
+                          .filter(f => (adminRatingFilter === 0 || f.rating === adminRatingFilter) && 
+                                       (f.message?.toLowerCase().includes(adminSearch.toLowerCase()) || f.email?.toLowerCase().includes(adminSearch.toLowerCase())))
+                          .map((f: any, i: number) => (
+                        <div key={i} className="p-8 glass rounded-[40px] space-y-4 relative overflow-hidden group border border-transparent hover:border-primary/20 transition-all">
+                          <div className="absolute top-0 right-0 p-6 opacity-[0.03] pointer-events-none">
+                            <UtensilsCrossed size={80} />
+                          </div>
+                          <div className="flex justify-between items-center relative z-10">
+                            <div className="flex gap-1 text-primary">
+                              {[...Array(5)].map((_, i) => <Star key={i} size={16} fill={i < f.rating ? "currentColor" : "none"} />)}
+                            </div>
+                            <span className="text-[10px] font-black opacity-30 uppercase tracking-[0.2em]">{new Date(f.timestamp).toLocaleString()}</span>
+                          </div>
+                          <p className="text-lg font-black leading-relaxed italic pr-12 relative z-10">
+                            "{f.message || "The user left a silent high-five!"}"
+                          </p>
+                          <div className="flex items-center gap-3 pt-4 relative z-10">
+                            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-black text-primary">
+                              {f.email?.[0].toUpperCase()}
+                            </div>
+                            <div>
+                               <p className="text-[10px] font-black uppercase tracking-widest">{f.email}</p>
+                               <p className="text-[8px] font-bold opacity-40 uppercase">User Feedback Submission</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               )}
             </motion.div>
           ) : view === 'collection' ? (

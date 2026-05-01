@@ -40,104 +40,37 @@ async function startServer() {
 
   // Firebase Auth Middleware
   const authenticate = async (req: any, res: any, next: any) => {
-    const logPath = path.join(__dirname, "server_logs.txt");
     const token = req.headers.authorization?.split("Bearer ")[1];
     
     if (!token) {
-      console.log(`[${new Date().toISOString()}] AUTH_FAIL: Missing token`);
       return res.status(401).json({ error: "Unauthorized" });
     }
-
+ 
     try {
       const decodedToken = await admin.auth().verifyIdToken(token);
       req.user = decodedToken;
-
-      const now = new Date().toISOString();
-      const userEmail = decodedToken.email || "no-email";
-      const uid = decodedToken.uid;
-      
-      const userRef = db.collection("users").doc(uid);
-      const userDoc = await userRef.get();
-      
-      if (!userDoc.exists) {
-        const newUser = {
-          user_id: uid, // Explicit user_id
-          uid: uid,
-          email: userEmail,
-          name: decodedToken.name || userEmail.split('@')[0] || "Unknown",
-          createdAt: now,
-          lastLogin: now,
-          updatedAt: now
-        };
-        await userRef.set(newUser);
-        fs.appendFileSync(logPath, `[now] DATABASE_WRITE: New User Created in Firestore (${userEmail})\n`);
-      } else {
-        const updateData: any = {
-          lastLogin: now,
-          email: userEmail,
-          updatedAt: now
-        };
-        if (decodedToken.name) updateData.name = decodedToken.name;
-        await userRef.update(updateData);
-        fs.appendFileSync(logPath, `[now] DATABASE_WRITE: User Session Updated in Firestore (${userEmail})\n`);
-      }
-
-      req.userId = uid; // Set userId for later use
-      req.user = decodedToken;
+      req.userId = decodedToken.uid;
       next();
     } catch (error) {
-      fs.appendFileSync(logPath, `[${new Date().toISOString()}] AUTH_ERROR: ${error instanceof Error ? error.message : error}\n`);
       console.error("Firebase auth error:", error);
       res.status(401).json({ error: "Invalid session" });
     }
   };
-
+ 
   // --- Auth Endpoints ---
   app.get("/api/auth/ping", authenticate, (req: any, res: any) => {
     res.json({ success: true, user: req.user });
   });
-
+ 
   app.post("/api/auth/logout", (req: any, res: any) => {
     res.json({ success: true });
   });
-
+ 
   // Health
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });
-
-  // Export Users for Admin
-  app.get("/api/admin/export-users", authenticate, async (req: any, res: any) => {
-    // Only allow specific admin email
-    if (req.user.email !== "jeevanshevgan13@gmail.com") {
-      return res.status(403).json({ error: "Access denied" });
-    }
-    
-    try {
-      const snapshot = await db.collection("users").get();
-      const users = snapshot.docs.map(doc => doc.data());
-      res.json(users);
-    } catch (e) {
-      res.status(500).json({ error: "Failed to fetch users" });
-    }
-  });
-
-  // Export Feedback for Admin
-  app.get("/api/admin/export-feedback", authenticate, async (req: any, res: any) => {
-    // Only allow specific admin email
-    if (req.user.email !== "jeevanshevgan13@gmail.com") {
-      return res.status(403).json({ error: "Access denied" });
-    }
-
-    try {
-      const snapshot = await db.collection("feedback").get();
-      const feedbacks = snapshot.docs.map(doc => doc.data());
-      res.json(feedbacks);
-    } catch (e) {
-      res.status(500).json({ error: "Failed to fetch feedback" });
-    }
-  });
-
+ 
   // Vite
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

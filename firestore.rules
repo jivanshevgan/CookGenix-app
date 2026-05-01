@@ -59,14 +59,14 @@ service cloud.firestore {
 
     // Collection Matches
     match /users/{uid} {
-      allow get: if isOwner(uid);
+      allow get: if isOwner(uid) || isAdmin();
       allow create, update: if isOwner(uid) && isValidUser(incoming());
       allow list: if isAdmin();
     }
 
     match /recipes/{recipeId} {
-      allow get: if isSignedIn() && existing().user_id == request.auth.uid;
-      allow list: if isSignedIn() && resource.data.user_id == request.auth.uid;
+      allow get: if (isSignedIn() && existing().user_id == request.auth.uid) || isAdmin();
+      allow list: if (isSignedIn() && resource.data.user_id == request.auth.uid) || isAdmin();
       
       allow create: if isSignedIn() && isValidRecipe(incoming());
       
@@ -75,12 +75,13 @@ service cloud.firestore {
           && isValidRecipe(incoming())
           && (incoming().diff(existing()).affectedKeys().hasOnly(['name', 'ingredients', 'method', 'updatedAt']) || isAdmin());
           
-      allow delete: if isSignedIn() && existing().user_id == request.auth.uid;
+      allow delete: if (isSignedIn() && existing().user_id == request.auth.uid) || isAdmin();
     }
 
     match /feedback/{feedbackId} {
       allow create: if isSignedIn() && isValidFeedback(incoming());
       allow list, get: if isAdmin();
+      allow delete: if isAdmin();
     }
   }
 }
