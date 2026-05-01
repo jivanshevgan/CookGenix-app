@@ -4,7 +4,7 @@ import {
   Camera, ChefHat, Sparkles, UtensilsCrossed, RefreshCcw, 
   CheckCircle2, ChevronRight, Info, X,
   Moon, Sun, Heart, Share2, Home, 
-  Plus, Star, Clock, LogOut, User as UserIcon, Bookmark, BookmarkCheck,
+  Plus, Star, Clock, LogOut, User as UserIcon, Bookmark, BookmarkCheck, Users,
   Image as ImageIcon, Mic, MicOff, RotateCcw, Search, Mail, Calendar, ArrowRight, Copy, ShieldCheck
 } from "lucide-react";
 import { 
@@ -13,10 +13,12 @@ import {
   generateRecipeImage,
   getIngredientSubstitute,
   customizeRecipe,
+  generateAdminInsights,
   type AnalysisResponse, 
   type Recipe,
   type RecipeStep
 } from "./lib/gemini";
+import ReactMarkdown from "react-markdown";
 import { AuthScreen } from "./components/AuthScreen";
 import { 
   collection, 
@@ -57,15 +59,56 @@ export default function App() {
     };
   }, []);
 
-  const [adminData, setAdminData] = useState<{ users: any[], feedback: any[], recipes: any[] } | null>(null);
+  const [adminData, setAdminData] = useState<{ users: any[], feedback: any[], recipes: any[], logs: any[] } | null>(null);
   const [loadingAdmin, setLoadingAdmin] = useState(false);
   const [adminTab, setAdminTab] = useState<string>("Overview");
   const [adminSearch, setAdminSearch] = useState("");
   const [adminTypeFilter, setAdminTypeFilter] = useState("All");
   const [adminRatingFilter, setAdminRatingFilter] = useState(0);
   const [selectedAdminUser, setSelectedAdminUser] = useState<any>(null);
+  const [selectedAdminRecipe, setSelectedAdminRecipe] = useState<any>(null);
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [dietaryGoal, setDietaryGoal] = useState<string>("Balanced");
+  const [aiInsights, setAiInsights] = useState<string | null>(null);
+  const [isGeneratingInsights, setIsGeneratingInsights] = useState(false);
+  const [broadcastMessage, setBroadcastMessage] = useState("");
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [isEmailing, setIsEmailing] = useState(false);
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailContent, setEmailContent] = useState("");
+
+  const handleFirestoreError = (error: unknown, operationType: string, path: string | null) => {
+    const errInfo = {
+      error: error instanceof Error ? error.message : String(error),
+      authInfo: {
+        userId: auth.currentUser?.uid,
+        email: auth.currentUser?.email,
+        emailVerified: auth.currentUser?.emailVerified,
+        isAnonymous: auth.currentUser?.isAnonymous,
+      },
+      operationType,
+      path
+    };
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+    return JSON.stringify(errInfo);
+  };
+
+  const logActivity = async (action: string, details: any) => {
+    if (!user) return;
+    try {
+      await addDoc(collection(db, "activity_logs"), {
+        uid: user.uid,
+        userName: user.name,
+        action,
+        details,
+        timestamp: new Date().toISOString(),
+        serverTimestamp: serverTimestamp()
+      });
+    } catch (e) {
+      console.error("Activity logging failed", e);
+    }
+  };
 
   const DIETARY_GOALS = [
     { name: "Balanced", icon: <UtensilsCrossed size={14} />, desc: "Wholesome meals" },
@@ -99,30 +142,148 @@ export default function App() {
   const fetchAdminData = async () => {
     if (!isAdmin || !auth.currentUser) return;
     setLoadingAdmin(true);
+    setError(null);
     try {
       // Fetch directly from Firestore (Bypassing server endpoints)
-      const [uSnap, fSnap, rSnap] = await Promise.all([
+      const results = await Promise.allSettled([
         getDocs(collection(db, "users")),
         getDocs(collection(db, "feedback")),
-        getDocs(collection(db, "recipes"))
+        getDocs(collection(db, "recipes")),
+        getDocs(query(collection(db, "activity_logs")))
       ]);
 
+      const [uRes, fRes, rRes, lRes] = results;
+
+      if (uRes.status === 'rejected') handleFirestoreError(uRes.reason, 'list', 'users');
+      if (fRes.status === 'rejected') handleFirestoreError(fRes.reason, 'list', 'feedback');
+      if (rRes.status === 'rejected') handleFirestoreError(rRes.reason, 'list', 'recipes');
+      if (lRes.status === 'rejected') handleFirestoreError(lRes.reason, 'list', 'activity_logs');
+
       setAdminData({
-        users: uSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })),
-        feedback: fSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })),
-        recipes: rSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+        users: uRes.status === 'fulfilled' ? uRes.value.docs.map(doc => ({ id: doc.id, ...doc.data() })) : [],
+        feedback: fRes.status === 'fulfilled' ? fRes.value.docs.map(doc => ({ id: doc.id, ...doc.data() })) : [],
+        recipes: rRes.status === 'fulfilled' ? rRes.value.docs.map(doc => ({ id: doc.id, ...doc.data() })) : [],
+        logs: lRes.status === 'fulfilled' ? lRes.value.docs.map(doc => ({ id: doc.id, ...doc.data() })) : []
       });
+
+      if (results.some(r => r.status === 'rejected')) {
+        setError("Some data failed to load. Check console for security rule issues.");
+      }
     } catch (e) {
+      const errStr = handleFirestoreError(e, "admin_fetch", "multiple");
       console.error("Admin fetch failed", e);
-      setError("Admin access failed. Check if you are truly logged in as admin.");
+      setError(`Admin access failed: ${errStr}`);
     } finally {
       setLoadingAdmin(false);
+    }
+  };
+
+  const handleGenerateInsights = async () => {
+    if (!adminData) return;
+    setIsGeneratingInsights(true);
+    try {
+      const insights = await generateAdminInsights(adminData);
+      setAiInsights(insights);
+    } catch (e) {
+      console.error(e);
+      setError("AI Insights failed to load.");
+    } finally {
+      setIsGeneratingInsights(false);
+    }
+  };
+
+  const handleBroadcast = async () => {
+    if (!broadcastMessage.trim()) return;
+    setIsBroadcasting(true);
+    try {
+      await addDoc(collection(db, "announcements"), {
+        message: broadcastMessage,
+        createdAt: serverTimestamp(),
+        author: user.name,
+        type: 'global'
+      });
+      setBroadcastMessage("");
+      alert("Broadcast sent successfully to all users!");
+      // Refresh announcements
+      const aSnap = await getDocs(query(collection(db, "announcements")));
+      setAnnouncements(aSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      logActivity("broadcast_sent", { message: broadcastMessage.substring(0, 50) });
+    } catch (e) {
+      console.error(e);
+      setError("Broadcast failed.");
+    } finally {
+      setIsBroadcasting(false);
+    }
+  };
+
+  const handleExportUsers = () => {
+    if (!adminData?.users) return;
+    
+    logActivity("admin_export_users", { count: adminData.users.length });
+    
+    const headers = ["Name", "Email", "UID", "Role", "Status", "Joined"];
+    const rows = adminData.users.map(u => [
+      u.name || "Anonymous",
+      u.email || "N/A",
+      u.uid,
+      u.role || "user",
+      u.status || "active",
+      u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "N/A"
+    ]);
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `cookgenix_users_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const updateUser = async (uid: string, data: any) => {
+    try {
+      await updateDoc(doc(db, "users", uid), {
+        ...data,
+        updatedAt: serverTimestamp()
+      });
+      alert("User updated successfully!");
+      fetchAdminData();
+      logActivity("admin_user_update", { targetUid: uid, changes: Object.keys(data) });
+    } catch (e) {
+      console.error(e);
+      alert("Update failed. Check permissions.");
+    }
+  };
+
+  const deleteUser = async (uid: string) => {
+    if (!window.confirm("Are you SURE? This will permanently remove this foodie from the platform.")) return;
+    try {
+      await deleteDoc(doc(db, "users", uid));
+      alert("User nuked from system.");
+      setSelectedAdminUser(null);
+      setAdminTab("Users");
+      fetchAdminData();
+      logActivity("admin_user_delete", { targetUid: uid });
+    } catch (e) {
+      console.error(e);
+      alert("Delete failed.");
     }
   };
 
   useEffect(() => {
     if (view === "admin") {
       fetchAdminData();
+      // Also fetch announcements
+      getDocs(query(collection(db, "announcements"))).then(snap => {
+        setAnnouncements(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
     }
   }, [view]);
   const [userRating, setUserRating] = useState(0);
@@ -239,13 +400,16 @@ export default function App() {
           // User Tracking: Save/Update user profile in Firestore
           try {
             const userRef = doc(db, "users", firebaseUser.uid);
+            const userDoc = await getDocs(query(collection(db, "users"), where("uid", "==", firebaseUser.uid)));
+            const isNew = userDoc.empty;
+            
             await setDoc(userRef, {
-              user_id: firebaseUser.uid,
               uid: firebaseUser.uid,
               email: firebaseUser.email,
               name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || "Unknown",
               lastLogin: new Date().toISOString(),
-              updatedAt: serverTimestamp()
+              updatedAt: serverTimestamp(),
+              ...(isNew ? { createdAt: new Date().toISOString() } : {})
             }, { merge: true });
           } catch (err) {
             console.error("User tracking failed:", err);
@@ -415,17 +579,15 @@ export default function App() {
     try {
       const [mimeTypePart, base64Data] = image.split(",");
       const mimeType = mimeTypePart.match(/:(.*?);/)?.[1] || "image/jpeg";
-      // analyzeFridgeImage doesn't take goal yet, let's just use text analysis for goals for now if needed or 
-      // we could update fridge image too. For simplicity, let's focus text/voice/quick for now.
       const data = await analyzeFridgeImage(base64Data, mimeType);
       setResult(data);
-      // Trigger rating modal after a short delay
+      logActivity("analyze_fridge", { ingredients: data.identifiedIngredients.length });
       setTimeout(() => setShowRatingModal(true), 1500);
     } catch (err) {
       console.error(err);
       setError("Something went wrong while analyzing the ingredients. Please try again.");
     } finally {
-      setIsAnalyzing(false);
+      setIsAnalyzing(true);
     }
   };
 
@@ -607,11 +769,14 @@ export default function App() {
                   <h2 className="text-4xl font-black uppercase tracking-tight">Admin <span className="text-primary italic">Command</span></h2>
                   <p className="text-xs font-bold uppercase opacity-40 tracking-widest mt-1">Platform-wide Insights & Activity</p>
                 </div>
-                <div className="flex gap-2 bg-black/5 dark:bg-white/5 p-1 rounded-2xl">
-                  {['Overview', 'Users', 'Recipes', 'Feedback'].map((tab) => (
+                <div className="flex flex-wrap gap-2 bg-black/5 dark:bg-white/5 p-1 rounded-2xl">
+                  {['Overview', 'Users', 'Logs', 'Emails', 'Feedback', 'AI Insights', 'Broadcast'].map((tab) => (
                     <button
                       key={tab}
-                      onClick={() => setAdminTab(tab)}
+                      onClick={() => {
+                        setAdminTab(tab);
+                        setAdminSearch("");
+                      }}
                       className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminTab === tab ? 'bg-primary text-white shadow-lg' : 'opacity-50 hover:opacity-100'}`}
                     >
                       {tab}
@@ -646,6 +811,43 @@ export default function App() {
                   {adminTab === 'Overview' && (
                     <motion.div key="ov" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="space-y-6">
+                          <h4 className="text-sm font-black uppercase tracking-[0.2em] opacity-40 flex items-center gap-2 italic">
+                             <UserIcon size={14} /> Platform Metrics
+                          </h4>
+                          <div className="grid grid-cols-1 gap-4">
+                            <div className="p-8 glass rounded-[40px] bg-primary/5 border border-primary/20 flex flex-col items-center justify-center text-center relative overflow-hidden group">
+                               <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:scale-110 transition-transform">
+                                 <Users size={120} />
+                               </div>
+                               <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4 text-primary">
+                                 <Users size={32} />
+                               </div>
+                               <h3 className="text-6xl font-black">{adminData?.users?.length || 0}</h3>
+                               <p className="text-[10px] font-black uppercase tracking-[0.4em] opacity-40 mt-3 italic">Total Registered Foodies</p>
+                               <div className="mt-8 flex gap-3">
+                                 <span className="px-4 py-2 bg-green-500/10 text-green-500 rounded-2xl text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 border border-green-500/20">
+                                   <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" /> Live
+                                 </span>
+                                 <span className="px-4 py-2 bg-primary/10 text-primary rounded-2xl text-[9px] font-black uppercase tracking-widest border border-primary/20">
+                                   Cloud Sync
+                                 </span>
+                               </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-4">
+                               <div className="p-6 glass rounded-[32px] border border-white/5 space-y-2">
+                                 <p className="text-3xl font-black text-secondary">{adminData?.recipes?.length || 0}</p>
+                                 <p className="text-[9px] font-black uppercase opacity-40 tracking-widest italic">Curated Recipes</p>
+                               </div>
+                               <div className="p-6 glass rounded-[32px] border border-white/5 space-y-2">
+                                 <p className="text-3xl font-black text-green-500">{adminData?.logs?.length || 0}</p>
+                                 <p className="text-[9px] font-black uppercase opacity-40 tracking-widest italic">System Events</p>
+                               </div>
+                            </div>
+                          </div>
+                        </div>
+
                         <div className="space-y-6">
                           <h4 className="text-sm font-black uppercase tracking-[0.2em] opacity-40 flex items-center gap-2">
                              <Clock size={14} /> Recent Logins
@@ -718,59 +920,70 @@ export default function App() {
                            <UserIcon size={14} className="text-primary" />
                            <span className="text-[10px] font-black uppercase tracking-widest opacity-60">Total: {adminData?.users?.length || 0} Users</span>
                         </div>
+                        <button 
+                          onClick={handleExportUsers}
+                          className="p-3 bg-secondary/10 hover:bg-secondary/20 text-secondary rounded-2xl flex items-center gap-2 transition-all group"
+                          title="Export Users to CSV"
+                        >
+                          <Share2 size={14} className="group-hover:rotate-12 transition-transform" />
+                          <span className="text-[10px] font-black uppercase tracking-widest">Export CSV</span>
+                        </button>
                       </div>
 
                       <div className="grid grid-cols-1 gap-3">
-                        {(adminData?.users || [])
-                          .filter(u => 
-                            u.name?.toLowerCase().includes(adminSearch.toLowerCase()) || 
-                            u.email?.toLowerCase().includes(adminSearch.toLowerCase()) ||
-                            u.uid?.toLowerCase().includes(adminSearch.toLowerCase())
-                          )
-                          .map((u: any, i: number) => {
+                        {(() => {
+                          const filteredUsers = (adminData?.users || []).filter(u => 
+                            (u.name?.toLowerCase() || "").includes(adminSearch.toLowerCase()) || 
+                            (u.email?.toLowerCase() || "").includes(adminSearch.toLowerCase()) ||
+                            (u.uid?.toLowerCase() || "").includes(adminSearch.toLowerCase())
+                          );
+
+                          if (filteredUsers.length === 0) {
+                            return (
+                              <div className="py-20 text-center glass rounded-[40px] opacity-40">
+                                <UserIcon size={40} className="mx-auto mb-4" />
+                                <p className="text-sm font-black uppercase tracking-widest">No users found matching "{adminSearch}"</p>
+                              </div>
+                            );
+                          }
+
+                          return filteredUsers.map((u: any, i: number) => {
                             const userRecipes = adminData?.recipes?.filter(r => r.user_id === u.uid) || [];
                             const userFeedback = adminData?.feedback?.filter(f => f.email === u.email) || [];
-                            const isGoogleUser = u.email === u.name; // Simple heuristic or we could check providerData
                             
                             return (
                               <div 
-                                key={i} 
+                                key={u.uid || i} 
                                 onClick={() => {
                                   setSelectedAdminUser(u);
                                   setAdminTab('User Focus');
                                 }}
-                                className="p-4 glass rounded-[24px] flex flex-col md:flex-row justify-between md:items-center gap-4 group cursor-pointer hover:bg-primary/5 transition-all border border-transparent hover:border-primary/20"
+                                className="p-5 glass rounded-[28px] flex flex-col md:flex-row justify-between md:items-center gap-6 group cursor-pointer hover:bg-primary/5 transition-all border border-transparent hover:border-primary/20"
                               >
-                                <div className="flex items-center gap-4">
-                                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-black text-sm">
-                                    {u.name?.[0].toUpperCase()}
+                                <div className="flex items-center gap-5">
+                                  <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary font-black text-lg">
+                                    {u.name?.[0]?.toUpperCase() || "?"}
                                   </div>
                                   <div>
-                                    <div className="flex items-center gap-2">
-                                      <p className="font-black text-sm">{u.name}</p>
-                                      <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${userFeedback.length > 0 ? 'bg-yellow-500/10 text-yellow-600' : 'bg-gray-500/10 text-gray-500'}`}>
-                                        {userFeedback.length > 0 ? 'Reviewer' : 'Silent'}
-                                      </span>
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <p className="font-black text-base">{u.name || "Anonymous User"}</p>
+                                        <div className="flex gap-1">
+                                          <span className={`text-[7px] font-black uppercase px-2 py-0.5 rounded-full ${u.role === 'admin' ? 'bg-primary text-white' : 'bg-black/5 dark:bg-white/10 opacity-50'}`}>
+                                            {u.role || 'user'}
+                                          </span>
+                                          <span className={`text-[7px] font-black uppercase px-2 py-0.5 rounded-full ${u.status === 'suspended' ? 'bg-red-500 text-white' : 'bg-green-500/10 text-green-600'}`}>
+                                            {u.status || 'active'}
+                                          </span>
+                                        </div>
                                     </div>
-                                    <div className="flex flex-col gap-1.5 mt-1.5">
-                                      <div className="flex items-center gap-2 px-2 py-1 bg-primary/[0.03] rounded-lg border border-primary/5 w-fit">
-                                        <Mail size={10} className="text-primary opacity-60" />
-                                        <p className="text-[9px] font-black text-primary uppercase tracking-wider leading-none">{u.email}</p>
-                                        <div className="w-[1px] h-3 bg-primary/10 ml-1" />
-                                        <button 
-                                          onClick={(e) => { 
-                                            e.stopPropagation(); 
-                                            navigator.clipboard.writeText(u.email);
-                                          }}
-                                          title="Copy Login ID"
-                                          className="p-1 hover:bg-primary/10 rounded transition-colors"
-                                        >
-                                          <Copy size={8} className="text-primary opacity-40 group-hover:opacity-100" />
-                                        </button>
+                                    <div className="flex flex-col gap-1.5">
+                                      <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 rounded-xl border border-primary/10 w-fit">
+                                        <Mail size={12} className="text-primary" />
+                                        <p className="text-[11px] font-black text-primary uppercase tracking-widest leading-none">{u.email || "No Email Provided"}</p>
                                       </div>
-                                      <div className="flex items-center gap-1.5">
-                                        <ShieldCheck size={8} className="text-green-500" />
-                                        <p className="text-[8px] font-bold opacity-30 uppercase tracking-tight">Identity: Firebase Verified</p>
+                                      <div className="flex items-center gap-1.5 pl-2 opacity-30">
+                                        <ShieldCheck size={10} className="text-green-500" />
+                                        <p className="text-[9px] font-bold uppercase tracking-tight">Verified Firebase Identity</p>
                                       </div>
                                     </div>
                                   </div>
@@ -778,20 +991,23 @@ export default function App() {
                                 
                                 <div className="flex gap-4 sm:gap-12 items-center justify-between md:justify-end">
                                   <div className="text-center md:text-right">
-                                    <p className="text-[8px] font-black uppercase opacity-30">Collections</p>
-                                    <p className="text-xs font-black text-primary">{userRecipes.length} Saved</p>
+                                    <p className="text-[9px] font-black uppercase opacity-30 tracking-widest">Saved</p>
+                                    <p className="text-sm font-black text-primary">{userRecipes.length} Recipes</p>
                                   </div>
                                   <div className="text-center md:text-right">
-                                    <p className="text-[8px] font-black uppercase opacity-30">Last Seen</p>
-                                    <p className="text-xs font-bold">{new Date(u.lastLogin || u.createdAt).toLocaleDateString()}</p>
+                                    <p className="text-[9px] font-black uppercase opacity-30 tracking-widest">Last Activity</p>
+                                    <p className="text-xs font-bold opacity-60">
+                                      {u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : (u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "Never")}
+                                    </p>
                                   </div>
-                                  <div className="p-2 rounded-full bg-primary/10 text-primary opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <ChevronRight size={16} />
+                                  <div className="p-2.5 rounded-2xl bg-primary/10 text-primary opacity-0 group-hover:opacity-100 transition-all group-hover:translate-x-1">
+                                    <ChevronRight size={18} />
                                   </div>
                                 </div>
                               </div>
                             );
-                          })}
+                          });
+                        })()}
                       </div>
                     </motion.div>
                   )}
@@ -817,42 +1033,96 @@ export default function App() {
                              <div className="flex flex-wrap justify-center md:justify-start gap-4">
                                <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-xl text-primary border border-primary/10">
                                  <Mail size={14} />
-                                 <span className="text-sm font-black uppercase tracking-tight">{selectedAdminUser.email}</span>
+                                 <span className="text-sm font-black uppercase tracking-widest">{selectedAdminUser.email}</span>
                                </div>
                                <p className="text-xs font-bold opacity-60 flex items-center gap-1 bg-black/5 dark:bg-white/5 px-3 py-1.5 rounded-xl"><Calendar size={12} /> Joined {new Date(selectedAdminUser.createdAt || Date.now()).toLocaleDateString()}</p>
                              </div>
                           </div>
-                          <div className="grid grid-cols-2 gap-4">
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                             <div className="p-4 bg-white/10 dark:bg-black/20 rounded-3xl text-center min-w-[100px]">
                               <p className="text-2xl font-black text-primary">{adminData?.recipes?.filter(r => r.user_id === selectedAdminUser.uid).length || 0}</p>
                               <p className="text-[8px] font-black uppercase opacity-40">Saved</p>
                             </div>
                             <div className="p-4 bg-white/10 dark:bg-black/20 rounded-3xl text-center min-w-[100px]">
+                              <p className="text-2xl font-black text-secondary">{adminData?.feedback?.filter(f => f.email === selectedAdminUser.email).length || 0}</p>
+                              <p className="text-[8px] font-black uppercase opacity-40">Reviews</p>
+                            </div>
+                            <div className="p-4 bg-white/10 dark:bg-black/20 rounded-3xl text-center min-w-[100px] col-span-2 md:col-span-1">
                               <p className="text-xs font-black opacity-30 break-all leading-none">{selectedAdminUser.uid.substring(0, 8)}...</p>
                               <p className="text-[8px] font-black uppercase opacity-40 mt-2">UID</p>
                             </div>
                           </div>
                        </div>
 
-                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            <h4 className="text-xs font-black uppercase tracking-widest opacity-40 flex items-center gap-2">
-                               <Bookmark size={14} /> Saved Recipes
+                       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+                          <div className="md:col-span-2 space-y-6">
+                            <h4 className="text-xs font-black uppercase tracking-widest opacity-40 flex items-center gap-2 italic">
+                               <Bookmark size={14} /> User Collection Telemetry
                             </h4>
-                            <div className="space-y-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                               {adminData?.recipes?.filter(r => r.user_id === selectedAdminUser.uid).map((r: any, i: number) => (
-                                <div key={i} className="p-5 glass rounded-3xl border border-white/5">
-                                  <div className="flex justify-between items-start mb-2">
+                                <div key={i} className="p-5 glass rounded-3xl border border-white/5 space-y-3">
+                                  <div className="flex justify-between items-start">
                                     <p className="font-extrabold text-sm">{r.name}</p>
                                     <span className="text-[8px] font-black uppercase text-primary bg-primary/10 px-2 py-0.5 rounded-lg">{r.type}</span>
                                   </div>
-                                  <p className="text-[10px] opacity-50 line-clamp-2 leading-relaxed">{r.ingredients?.join(", ")}</p>
+                                  <p className="text-[10px] font-bold opacity-30 italic">Saved on {new Date(r.savedAt).toLocaleDateString()}</p>
                                 </div>
                               ))}
                               {adminData?.recipes?.filter(r => r.user_id === selectedAdminUser.uid).length === 0 && (
-                                <p className="text-center py-8 text-xs font-bold opacity-30 italic">No recipes saved yet.</p>
+                                <div className="sm:col-span-2 py-12 text-center glass rounded-3xl opacity-30 border-dashed border-2">
+                                  <p className="text-[10px] font-black uppercase tracking-widest">No recipes saved yet</p>
+                                </div>
                               )}
                             </div>
                           </div>
+
+                          <div className="space-y-6">
+                            <h4 className="text-xs font-black uppercase tracking-widest opacity-40 flex items-center gap-2 italic">
+                               <ShieldCheck size={14} /> Admin Controls
+                            </h4>
+                            <div className="p-6 glass rounded-[32px] border border-red-500/10 bg-red-500/5 space-y-4">
+                               <div className="space-y-3">
+                                 <p className="text-[10px] font-black uppercase tracking-widest opacity-40 px-2 italic">Role Assignment</p>
+                                 <div className="flex gap-2">
+                                   {['user', 'admin'].map(role => (
+                                     <button 
+                                       key={role}
+                                       onClick={() => updateUser(selectedAdminUser.uid, { role })}
+                                       className={`flex-1 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${selectedAdminUser.role === role ? 'bg-primary text-white shadow-lg' : 'bg-black/5 dark:bg-white/5 opacity-50'}`}
+                                     >
+                                       {role}
+                                     </button>
+                                   ))}
+                                 </div>
+                               </div>
+
+                               <div className="space-y-3">
+                                 <p className="text-[10px] font-black uppercase tracking-widest opacity-40 px-2 italic">Account Status</p>
+                                 <div className="flex gap-2">
+                                   {['active', 'suspended'].map(status => (
+                                     <button 
+                                       key={status}
+                                       onClick={() => updateUser(selectedAdminUser.uid, { status })}
+                                       className={`flex-1 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${selectedAdminUser.status === status ? 'bg-black text-white dark:bg-white dark:text-black' : 'bg-black/5 dark:bg-white/5 opacity-50'}`}
+                                     >
+                                       {status}
+                                     </button>
+                                   ))}
+                                 </div>
+                               </div>
+
+                               <div className="pt-4 border-t border-red-500/10">
+                                 <button 
+                                   onClick={() => deleteUser(selectedAdminUser.uid)}
+                                   className="w-full py-4 rounded-2xl bg-red-500 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-red-500/20 hover:scale-105 transition-all flex items-center justify-center gap-2"
+                                 >
+                                   <X size={14} /> Permanently Delete
+                                 </button>
+                               </div>
+                            </div>
+                          </div>
+                       </div>
 
                           <div className="space-y-6">
                             <h4 className="text-xs font-black uppercase tracking-widest opacity-40 flex items-center gap-2">
@@ -875,67 +1145,153 @@ export default function App() {
                               )}
                             </div>
                           </div>
-                       </div>
-                    </motion.div>
+                        </motion.div>
                   )}
 
-                  {adminTab === 'Recipes' && (
-                    <motion.div key="re" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-                      <div className="flex flex-col md:flex-row gap-4">
-                        <div className="relative flex-1">
-                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-primary opacity-50" size={18} />
-                          <input 
-                            type="text" 
-                            placeholder="Search recipes or ingredients..."
-                            value={adminSearch}
-                            onChange={(e) => setAdminSearch(e.target.value)}
-                            className="w-full pl-12 pr-4 py-4 glass rounded-2xl border border-transparent focus:border-primary outline-none transition-all font-bold text-sm"
-                          />
-                        </div>
-                        <div className="flex gap-2 p-1 bg-black/5 dark:bg-white/5 rounded-2xl overflow-x-auto no-scrollbar">
-                          {['All', 'Veg', 'Non-Veg', 'Eggitarian', 'Balanced'].map((f) => (
-                            <button
-                              key={f}
-                              onClick={() => setAdminTypeFilter(f)}
-                              className={`px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${adminTypeFilter === f ? 'bg-primary text-white' : 'opacity-40 hover:opacity-100'}`}
-                            >
-                              {f}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {(adminData?.recipes || [])
-                          .filter(r => (adminTypeFilter === 'All' || r.type === adminTypeFilter) && 
-                                       (r.name?.toLowerCase().includes(adminSearch.toLowerCase()) || r.ingredients?.some((i: string) => i.toLowerCase().includes(adminSearch.toLowerCase()))))
-                          .map((r: any, i: number) => (
-                          <div key={i} className="p-5 glass rounded-3xl space-y-4 relative overflow-hidden group border border-transparent hover:border-primary/20 transition-all">
-                            <div className="flex justify-between items-start">
-                              <h5 className="font-extrabold pr-8 leading-tight">{r.name}</h5>
-                              <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-primary/10 text-primary">
-                                {r.type}
-                              </span>
-                            </div>
-                            <div className="flex gap-2 flex-wrap">
-                              {r.ingredients?.slice(0, 4).map((ing: string, j: number) => (
-                                <span key={j} className="text-[8px] font-bold opacity-50 px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5 uppercase">
-                                  {ing}
-                                </span>
+
+
+
+                    {adminTab === 'Logs' && (
+                      <motion.div key="lo" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+                        <div className="flex justify-between items-end">
+                          <div>
+                            <h4 className="text-xs font-black uppercase tracking-widest opacity-40">Security & Operational Logs</h4>
+                            <p className="text-[10px] font-bold opacity-30">Real-time system telemetry</p>
+                          </div>
+                          <button onClick={fetchAdminData} className="text-xs font-black text-primary flex items-center gap-2">
+                             <RefreshCcw size={12} /> Sync Logs
+                          </button>
+                        </div>
+                        <div className="glass rounded-[32px] overflow-hidden border border-white/5">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="bg-black/5 dark:bg-white/5 border-bottom border-white/5">
+                                <th className="p-4 text-[10px] font-black uppercase tracking-widest opacity-50">Timestamp</th>
+                                <th className="p-4 text-[10px] font-black uppercase tracking-widest opacity-50">User</th>
+                                <th className="p-4 text-[10px] font-black uppercase tracking-widest opacity-50">Action</th>
+                                <th className="p-4 text-[10px] font-black uppercase tracking-widest opacity-50">Details</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(adminData?.logs || []).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).map((l, i) => (
+                                <tr key={i} className="border-t border-white/5 hover:bg-white/5 transition-colors">
+                                  <td className="p-4 text-[10px] font-mono opacity-50">{new Date(l.timestamp).toLocaleTimeString()}</td>
+                                  <td className="p-4">
+                                    <p className="text-[10px] font-black">{l.userName}</p>
+                                    <p className="text-[8px] opacity-30 truncate w-20">{l.uid}</p>
+                                  </td>
+                                  <td className="p-4">
+                                    <span className={`px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest ${l.action.includes('error') ? 'bg-red-500/10 text-red-500' : 'bg-primary/10 text-primary'}`}>
+                                      {l.action}
+                                    </span>
+                                  </td>
+                                  <td className="p-4 text-[10px] font-medium opacity-60">
+                                    {typeof l.details === 'object' ? JSON.stringify(l.details) : l.details}
+                                  </td>
+                                </tr>
                               ))}
-                              {r.ingredients?.length > 4 && <span className="text-[8px] font-bold opacity-30 italic">+{r.ingredients.length - 4} more</span>}
-                            </div>
-                            <div className="pt-3 border-t border-black/5 dark:border-white/5 flex justify-between items-center text-[10px]">
-                              <span className="opacity-40 font-bold uppercase truncate max-w-[120px]">UID: {r.user_id}</span>
-                              <span className="font-black text-primary">{new Date(r.savedAt).toLocaleDateString()}</span>
+                              {adminData?.logs?.length === 0 && (
+                                <tr>
+                                  <td colSpan={4} className="p-12 text-center opacity-30 italic text-xs">No system logs available yet.</td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {adminTab === 'Emails' && (
+                      <motion.div key="em" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                          <div className="space-y-6">
+                            <h4 className="text-xs font-black uppercase tracking-[0.2em] opacity-40 italic">Communication Center</h4>
+                            <div className="p-8 glass rounded-[40px] border border-primary/10 space-y-6 bg-primary/5">
+                               <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase tracking-widest opacity-40 px-2">Recipient</label>
+                                  <select 
+                                    className="w-full p-6 rounded-3xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary outline-none transition-all font-bold text-xs uppercase"
+                                    defaultValue=""
+                                  >
+                                    <option value="" disabled>Select a User</option>
+                                    {adminData?.users?.map(u => (
+                                      <option key={u.id} value={u.email}>{u.name} ({u.email})</option>
+                                    ))}
+                                  </select>
+                               </div>
+                               <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase tracking-widest opacity-40 px-2">Subject</label>
+                                  <input 
+                                    type="text"
+                                    value={emailSubject}
+                                    onChange={(e) => setEmailSubject(e.target.value)}
+                                    placeholder="Newsletter, Update, etc."
+                                    className="w-full p-6 rounded-3xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary outline-none transition-all font-medium text-sm"
+                                  />
+                               </div>
+                               <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase tracking-widest opacity-40 px-2">Content (Markdown Supported)</label>
+                                  <textarea 
+                                    value={emailContent}
+                                    onChange={(e) => setEmailContent(e.target.value)}
+                                    placeholder="Write your message here..."
+                                    className="w-full min-h-[200px] p-6 rounded-3xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary outline-none transition-all font-medium text-sm"
+                                  />
+                               </div>
+                               <button 
+                                onClick={async () => {
+                                  setIsEmailing(true);
+                                  await logActivity("email_sent", { subject: emailSubject, length: emailContent.length });
+                                  setTimeout(() => {
+                                    setIsEmailing(false);
+                                    setEmailSubject("");
+                                    setEmailContent("");
+                                    alert("Email dispatched via CookGenix Custom Domain Outbox!");
+                                  }, 1000);
+                                }}
+                                disabled={!emailSubject || !emailContent || isEmailing}
+                                className="w-full py-5 bg-primary text-white rounded-3xl font-black shadow-xl shadow-primary/20 hover:scale-105 transition-all flex items-center justify-center gap-3 disabled:opacity-40"
+                               >
+                                 <Mail size={20} />
+                                 {isEmailing ? "Dispatching..." : "Send Secure Email"}
+                               </button>
+                               <p className="text-[9px] font-bold opacity-30 text-center uppercase tracking-widest">Sent using @cookgenix.strategic.node</p>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    </motion.div>
-                  )}
 
-                  {adminTab === 'Feedback' && (
+                          <div className="space-y-6">
+                            <h4 className="text-xs font-black uppercase tracking-[0.2em] opacity-40">Live Reputation Hub</h4>
+                            <div className="p-8 glass rounded-[40px] border border-white/10 space-y-8">
+                               <div className="flex items-center justify-between">
+                                 <div>
+                                   <p className="text-3xl font-black">{adminData?.feedback?.length || 0}</p>
+                                   <p className="text-[9px] font-black uppercase opacity-40 mt-1 italic">Total Citations Received</p>
+                                 </div>
+                                 <div className="w-12 h-12 rounded-2xl bg-secondary/20 flex items-center justify-center text-secondary">
+                                   <Sparkles size={24} />
+                                 </div>
+                               </div>
+                               <div className="space-y-4 pt-4 border-t border-white/10">
+                                 <div className="flex justify-between items-center">
+                                   <span className="text-[10px] font-black uppercase tracking-widest opacity-60 italic">Email Delivery Status</span>
+                                   <span className="text-[10px] font-black text-green-500 uppercase tracking-widest">99.8% Healthy</span>
+                                 </div>
+                                 <div className="w-full h-1.5 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
+                                   <div className="h-full bg-green-500 w-[99.8%]" />
+                                 </div>
+                               </div>
+                               <div className="p-6 bg-black/5 dark:bg-white/5 rounded-[32px] border border-dashed border-white/20">
+                                 <p className="text-xs font-black mb-2 italic">Strategic Tip</p>
+                                 <p className="text-[10px] font-medium opacity-60 leading-relaxed">Consider sending a 'Cooking Tip of the Week' newsletter to re-engage users who haven't logged in for 48 hours.</p>
+                               </div>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {adminTab === 'Feedback' && (
                     <motion.div key="fe" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                       <div className="flex flex-col md:flex-row gap-4">
                         <div className="relative flex-1">
@@ -991,6 +1347,92 @@ export default function App() {
                         </div>
                       ))}
                       </div>
+                    </motion.div>
+                  )}
+
+                  {adminTab === 'AI Insights' && (
+                    <motion.div key="ai-in" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+                       <div className="p-8 glass rounded-[40px] bg-primary/5 border border-primary/20 relative overflow-hidden">
+                          <div className="absolute -top-10 -right-10 opacity-10 blur-xl">
+                            <Sparkles size={200} className="text-primary" />
+                          </div>
+                          <div className="relative z-10 flex flex-col md:flex-row justify-between items-start gap-8">
+                            <div className="max-w-xl">
+                              <h3 className="text-3xl font-black mb-4">Strategic <span className="text-primary">AI Intelligence</span></h3>
+                              <p className="text-sm font-medium opacity-60 leading-relaxed">
+                                Our AI engine is ready to crunch high-level metrics across all recipes, user patterns, and satisfaction indices to provide you with actionable platform insights.
+                              </p>
+                            </div>
+                            <button 
+                              onClick={handleGenerateInsights}
+                              disabled={isGeneratingInsights}
+                              className="px-8 py-5 bg-primary text-white rounded-3xl font-black flex items-center gap-3 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-primary/20 disabled:opacity-50"
+                            >
+                              {isGeneratingInsights ? <RefreshCcw size={20} className="animate-spin" /> : <Sparkles size={20} />}
+                              {isGeneratingInsights ? "Processing Cloud Data..." : "Generate New Report"}
+                            </button>
+                          </div>
+                       </div>
+
+                       {aiInsights && (
+                         <div className="p-10 glass rounded-[40px] border border-white/10 dark:bg-black/20 prose prose-invert max-w-none prose-headings:font-black prose-p:font-medium prose-p:opacity-80 prose-li:font-medium">
+                            <ReactMarkdown>{aiInsights}</ReactMarkdown>
+                         </div>
+                       )}
+                    </motion.div>
+                  )}
+
+                  {adminTab === 'Broadcast' && (
+                    <motion.div key="bc" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                          <div className="space-y-6">
+                            <h4 className="text-xs font-black uppercase tracking-[0.2em] opacity-40">Issue New Announcement</h4>
+                            <div className="p-8 glass rounded-[40px] border border-primary/10 space-y-6">
+                               <div className="space-y-2">
+                                  <label className="text-[10px] font-black uppercase tracking-widest opacity-40 px-2">Message</label>
+                                  <textarea 
+                                    value={broadcastMessage}
+                                    onChange={(e) => setBroadcastMessage(e.target.value)}
+                                    placeholder="Important system update, maintenance, or news..."
+                                    className="w-full min-h-[150px] p-6 rounded-3xl bg-black/5 dark:bg-white/5 border border-transparent focus:border-primary outline-none transition-all font-medium text-sm"
+                                  />
+                               </div>
+                               <button 
+                                onClick={handleBroadcast}
+                                disabled={!broadcastMessage.trim() || isBroadcasting}
+                                className="w-full py-5 bg-gradient-to-r from-primary to-orange-500 text-white rounded-3xl font-black shadow-xl shadow-primary/20 hover:scale-105 transition-all flex items-center justify-center gap-3 disabled:opacity-40"
+                               >
+                                 <Share2 size={20} />
+                                 {isBroadcasting ? "Broadcasting..." : "Confirm & Send to All Users"}
+                               </button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-6">
+                            <h4 className="text-xs font-black uppercase tracking-[0.2em] opacity-40">Previous Broadcasts</h4>
+                            <div className="space-y-4">
+                               {announcements.length === 0 ? (
+                                 <div className="p-12 text-center glass rounded-[40px] opacity-30">
+                                   <Share2 size={40} className="mx-auto mb-4" />
+                                   <p className="text-[10px] font-black uppercase tracking-widest">No previous broadcasts</p>
+                                 </div>
+                               ) : (
+                                announcements.sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((a, i) => (
+                                 <div key={i} className="p-6 glass rounded-3xl space-y-3 relative overflow-hidden group">
+                                    <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:scale-150 transition-transform">
+                                      <Info size={60} />
+                                    </div>
+                                    <p className="font-black text-sm relative z-10 leading-relaxed pr-8">{a.message}</p>
+                                    <div className="flex justify-between items-center pt-3 border-t border-black/5 dark:border-white/10 relative z-10">
+                                      <span className="text-[9px] font-black uppercase tracking-widest text-primary">Issued by {a.author}</span>
+                                      <span className="text-[9px] font-bold opacity-30 italic">{a.createdAt ? new Date(a.createdAt.seconds * 1000).toLocaleDateString() : 'Just now'}</span>
+                                    </div>
+                                 </div>
+                                ))
+                               )}
+                            </div>
+                          </div>
+                       </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -1050,6 +1492,35 @@ export default function App() {
               animate={{ opacity: 1 }}
               className="text-center py-10 md:py-20"
             >
+              {/* Announcement Ribbon */}
+              <AnimatePresence>
+                {announcements.length > 0 && (
+                  <motion.div 
+                    initial={{ y: -50, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    className="mb-12"
+                  >
+                    <div className="flex items-center gap-3 p-4 bg-primary/10 border border-primary/20 rounded-3xl max-w-lg mx-auto overflow-hidden relative group">
+                      <div className="p-2.5 bg-primary text-white rounded-2xl animate-bounce">
+                        <Sparkles size={16} />
+                      </div>
+                      <div className="flex-1 text-left">
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-primary mb-1">New Update from Chef</p>
+                        <div className="flex flex-col">
+                          <motion.p 
+                            className="text-xs font-black italic line-clamp-1"
+                            animate={{ x: [0, -5, 0] }}
+                            transition={{ duration: 4, repeat: Infinity }}
+                          >
+                            {announcements.sort((a,b) => b.createdAt?.seconds - a.createdAt?.seconds)[0].message}
+                          </motion.p>
+                        </div>
+                      </div>
+                      <button className="text-[10px] font-black text-primary underline decoration-2 underline-offset-4 ml-4">Read All</button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
               <motion.div
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}

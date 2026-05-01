@@ -372,3 +372,37 @@ export async function analyzeIngredientsText(text: string, goal?: string): Promi
     throw new Error("Invalid response format from AI server");
   }
 }
+
+export async function generateAdminInsights(adminData: any): Promise<string> {
+  const model = "gemini-3-flash-preview";
+  
+  const systemInstruction = `
+    You are a Strategic Platform Analyst for CookGenix. 
+    You will receive a summary of platform data (users, recipes, feedback).
+    Analyze this data and provide:
+    1. Trend Analysis: What ingredients are most popular? What dietary patterns are emerging?
+    2. Sentiment Summary: How happy are users based on feedback ratings?
+    3. Strategic Suggestions: What features or content (e.g., categories) should we focus on?
+    4. Growth Metrics: Brief summary of activity level.
+    
+    Format the response in clean Markdown. Use bold headers, bullet points, and tables where appropriate.
+    Tone: Professional, high-level, and insightful.
+  `;
+
+  try {
+    const response = await ai.models.generateContent({
+      model,
+      contents: {
+        parts: [{ text: "Admin Data Summary: " + JSON.stringify(adminData) }]
+      },
+      config: {
+        systemInstruction
+      }
+    });
+
+    return response.text?.trim() || "Unable to generate insights at this time.";
+  } catch (error) {
+    console.error("Insights generation failed:", error);
+    return "Insights engine is currently recalibrating. Please try again later.";
+  }
+}
